@@ -46,11 +46,22 @@ function isLocked(tier) {
   return !isUnlocked(tier);
 }
 
+function allFree() {
+  return !!(state && (state.allFree || ConfigAllFree));
+}
+
+const ConfigAllFree = true;
+
+function needsPremium(t) {
+  if (!t || allFree()) return false;
+  return !!(t.premium && state && !state.premium);
+}
+
 function claimableCount() {
   if (!state) return 0;
   return (state.tiers || []).filter((t) => {
     if (isClaimed(t.tier) || isLocked(t.tier)) return false;
-    if (t.premium && !state.premium) return false;
+    if (needsPremium(t)) return false;
     return true;
   }).length;
 }
@@ -116,15 +127,18 @@ function renderLeft() {
   $('statClaimed').textContent = claimed;
   $('statRemain').textContent = Math.max(0, total - claimed);
   const mult = $('xpMult');
-  if (state.premium) {
-    mult.classList.add('on');
+  mult.classList.add('on');
+  if (state.premium && !allFree()) {
     mult.textContent = `${Number(state.premiumMultiplier || 2)}X XP`;
   } else {
-    mult.classList.remove('on');
+    mult.textContent = 'CITY XP';
   }
   const card = $('premiumCard');
-  if (state.premium) {
-    card.classList.add('active');
+  card.classList.add('active');
+  if (allFree()) {
+    $('premiumTitle').textContent = 'ALL TIERS FREE';
+    $('premiumSub').textContent = 'Every unlocked reward is claimable. Earn XP by staying in the city.';
+  } else if (state.premium) {
     $('premiumTitle').textContent = 'PREMIUM ACTIVE';
     $('premiumSub').textContent = 'All premium benefits unlocked.';
   } else {
@@ -140,13 +154,12 @@ function renderPreview() {
   $('previewImage').src = iconSrc(t);
   $('previewName').textContent = t.name.toUpperCase();
   $('previewDesc').textContent = t.description || '';
-  $('previewType').textContent = typeLabel(t);
+  const qty = Number(t.amount) > 1 ? `  ·  x${t.amount}` : '';
+  $('previewType').textContent = `${typeLabel(t)}${qty}`;
   $('previewTags').innerHTML = [
     `<span class="tag ${rarityClass(t.rarity)}">${(t.rarity || 'common').toUpperCase()}</span>`,
     `<span class="tag tier">TIER ${t.tier}</span>`,
-    t.premium
-      ? `<span class="tag premium">PREMIUM</span>`
-      : `<span class="tag free">FREE</span>`
+    `<span class="tag free">FREE</span>`
   ].join('');
 
   const btn = $('claimBtn');
@@ -160,7 +173,7 @@ function renderPreview() {
     btn.textContent = 'LOCKED';
     btn.classList.add('locked');
     btn.disabled = true;
-  } else if (t.premium && !state.premium) {
+  } else if (needsPremium(t)) {
     btn.textContent = 'PREMIUM REQUIRED';
     btn.classList.add('premium');
     btn.disabled = true;
@@ -181,18 +194,17 @@ function renderTrack() {
     const locked = isLocked(t.tier);
     const done = claimed.has(t.tier);
     const selected = t.tier === selectedTier ? ' selected' : '';
-    const flag = t.premium
-      ? `<div class="card-flag">${typeLabel(t).toUpperCase()}</div>`
-      : `<div class="card-flag free">FREE</div>`;
+    const qty = Number(t.amount) > 1 ? `<div class="card-qty">x${t.amount}</div>` : '';
     return `
       <article class="card${selected}${locked ? ' locked' : ''}${done ? ' claimed' : ''}" data-tier="${t.tier}">
         <div class="card-next">NEXT</div>
         <div class="card-check">${CHECK_SVG}</div>
+        ${qty}
         <div class="card-tier">${t.tier}</div>
         <div class="card-art"><img src="${iconSrc(t)}" alt="" /></div>
         <div class="card-name">${t.name}</div>
         <div class="card-lock">${LOCK_SVG}</div>
-        ${flag}
+        <div class="card-flag free">FREE</div>
       </article>
     `;
   }).join('');
@@ -236,7 +248,7 @@ function pickDefaultTier(data) {
   const claimed = new Set((data.claimed || []).map(Number));
   const unlocked = data.unlocked || 0;
   for (const t of data.tiers || []) {
-    if (t.tier <= unlocked && !claimed.has(t.tier) && !(t.premium && !data.premium)) {
+    if (t.tier <= unlocked && !claimed.has(t.tier) && !(t.premium && !data.premium && !data.allFree && !ConfigAllFree)) {
       return t.tier;
     }
   }
@@ -301,7 +313,7 @@ $('claimBtn').addEventListener('click', () => {
   const t = currentReward();
   if (!t) return;
   post('claim', { tier: t.tier });
-  if (!IN_FIVEM) {
+  if (!IN_FIVEM && !isClaimed(t.tier) && isUnlocked(t.tier) && !needsPremium(t)) {
     state.claimed = [...(state.claimed || []), t.tier];
     state.claimedCount = state.claimed.length;
     render();
@@ -312,7 +324,7 @@ $('claimAllBtn').addEventListener('click', () => {
   post('claimAll');
   if (!IN_FIVEM) {
     state.tiers.forEach((t) => {
-      if (isUnlocked(t.tier) && !(t.premium && !state.premium) && !isClaimed(t.tier)) {
+      if (isUnlocked(t.tier) && !needsPremium(t) && !isClaimed(t.tier)) {
         state.claimed.push(t.tier);
       }
     });
@@ -371,55 +383,15 @@ setInterval(() => {
   $('seasonTimer').textContent = formatTimer(left);
 }, 250);
 
-const MOCK_TIERS = [
-  ['Street Starter', 'A little cash to get you moving through the city.', 'money', 2500, 'common', false],
-  ['Bandage Bundle', 'Ten field bandages. Patch up and keep grinding.', 'item', 10, 'common', true],
-  ['Big Drinks', 'A fridge pack of cold drinks for long nights in the city.', 'item', 15, 'common', true],
-  ['LSD', 'A small bag of tabs. Handle with care.', 'item', 5, 'rare', true],
-  ['Knife', 'A sharp blade for when words stop working.', 'weapon', 1, 'common', false],
-  ['Lockpick Kit', 'Eight lockpicks. Quiet hands, open doors.', 'item', 8, 'common', true],
-  ['Adrenaline Shots', 'Five syringes. Get back on your feet fast.', 'item', 5, 'rare', true],
-  ['Black and Cyan Crown', 'Season 1 flex piece. Wear it like you earned it.', 'item', 1, 'epic', true],
-  ['44MM Ammo', '85x .44 caliber rounds, spend them wisely.', 'item', 85, 'rare', true],
-  ['Bag of Money', 'A stuffed bag of dirty city cash.', 'money', 10000, 'rare', true],
-  ['Tec-9', 'A compact machine pistol. Free track hardware.', 'weapon', 1, 'rare', false],
-  ['10x Sprunks', 'Ten ice-cold Sprunks. Stay sharp.', 'item', 10, 'common', true],
-  ['A Box of Money', 'A sealed box packed with city bills.', 'money', 20000, 'epic', true],
-  ['Dino Plan', 'A rare collectible blueprint. Frame it or flip it.', 'item', 1, 'epic', true],
-  ['Heavy Armor', 'Two heavy vests rated for a bad night.', 'item', 2, 'rare', true],
-  ['Gold Chain', 'Thick gold. Let them know you are climbing the pass.', 'item', 1, 'rare', true],
-  ['AP Pistol', 'Armor-piercing sidearm. Free track, high value.', 'weapon', 1, 'epic', false],
-  ['Cash Drop', 'Twenty-five thousand, no questions asked.', 'money', 25000, 'rare', true],
-  ['Encrypted Radio', 'A tuned radio for crews that do not like scanners.', 'item', 1, 'rare', true],
-  ['SMG Ammo Crate', '200 rounds of SMG ammo, crate and all.', 'item', 200, 'rare', true],
-  ['Thick Envelope', 'Forty thousand in a fat envelope. Free track payday.', 'money', 40000, 'epic', false],
-  ['Drift Plate', 'A custom plate voucher for your next build.', 'item', 1, 'epic', true],
-  ['Combat PDW', 'A compact PDW for close city work.', 'weapon', 1, 'epic', true],
-  ['Season Crate', 'A sealed Chapter 1 crate. Open it when you are ready.', 'item', 1, 'legendary', true],
-  ['Vault Stack', 'Seventy-five thousand. The free track does pay.', 'money', 75000, 'legendary', false],
-  ['Garage Voucher', 'Priority garage slot voucher for your next ride.', 'item', 1, 'epic', true],
-  ['Diamond Rolex', 'Iced out. Chapter 1 status on your wrist.', 'item', 1, 'legendary', true],
-  ['Champion 1F', 'Season 1 champion vehicle. The city will see you coming.', 'vehicle', 1, 'legendary', true]
-];
-
-function mockState() {
-  const tiers = MOCK_TIERS.map((row, i) => ({
-    tier: i + 1,
-    name: row[0],
-    description: row[1],
-    type: row[2],
-    amount: row[3],
-    rarity: row[4],
-    premium: row[5],
-    icon: `tier_${String(i + 1).padStart(2, '0')}.svg`
-  }));
+function mockState(tiers) {
   const unlocked = 11;
-  const claimed = [1, 2, 3, 4, 5, 6, 7, 8, 10];
+  const claimed = [1, 2, 3, 4, 5, 7, 8, 10];
   return {
     title: 'DJFIVEM-Battlepass',
     chapter: 1,
     season: 1,
     seasonLabel: 'BATTLE PASS C1S1',
+    allFree: true,
     xp: 11 * 2000 + 100,
     xpPerTier: 2000,
     xpIntoTier: 100,
@@ -428,10 +400,10 @@ function mockState() {
     unlocked,
     claimed,
     claimedCount: claimed.length,
-    premium: true,
+    premium: false,
     premiumMultiplier: 2,
     remainingSeconds: 30 * 24 * 60 * 60 - 3600,
-    totalTiers: 28,
+    totalTiers: tiers.length || 28,
     closeKey: 'ESC',
     openKey: 'F12',
     tiers
@@ -440,7 +412,10 @@ function mockState() {
 
 if (!IN_FIVEM) {
   document.body.classList.add('preview');
-  openUi(mockState(), 9);
+  fetch('tiers.json')
+    .then((r) => r.json())
+    .then((tiers) => openUi(mockState(tiers), 11))
+    .catch(() => openUi(mockState([]), 1));
 } else {
   post('ready');
 }

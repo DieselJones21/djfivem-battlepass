@@ -198,6 +198,7 @@ local function buildPayload(src)
         claimed = row.claimed,
         claimedCount = claimedCount,
         premium = row.premium and true or false,
+        allFree = Config.AllTiersFree and true or false,
         premiumMultiplier = Config.PremiumXpMultiplier or 2.0,
         remainingSeconds = math.max(0, (endsAt or now) - now),
         seasonEndsAt = endsAt,
@@ -259,7 +260,9 @@ local function canClaim(row, tier)
     if not reward then return false, 'invalid' end
     if claimedSet(row.claimed)[tier] then return false, 'claimed' end
     if tierFromXp(row.xp) < tier then return false, 'locked' end
-    if reward.premium and not row.premium then return false, 'premium' end
+    if reward.premium and not row.premium and not Config.AllTiersFree then
+        return false, 'premium'
+    end
     local _, _, endsAt, now = seasonActive()
     -- Allow claiming after start; block after season ends.
     if now < select(1, seasonWindow()) then return false, 'not_started' end
@@ -267,16 +270,25 @@ local function canClaim(row, tier)
     return true, reward
 end
 
+local function tryGiveItem(src, item, amount)
+    if not item or item == '' then return false end
+    if Framework.AddItem(src, item, amount) then return true end
+    local lower = item:lower()
+    if lower ~= item and Framework.AddItem(src, lower, amount) then return true end
+    return false
+end
+
 local function grantReward(src, reward)
     if reward.type == 'money' then
         local ok = Framework.AddMoney(src, reward.amount)
         if not ok then
-            -- Standalone servers still mark claimed; cash is logged.
             print(('[DJFIVEM-Battlepass] money grant fallback src=%s amount=%s'):format(src, reward.amount))
         end
         return true
     end
     if reward.type == 'weapon' then
+        -- Custom WEAPON_* items are usually inventory entries. Try the item first.
+        if tryGiveItem(src, reward.item, reward.amount or 1) then return true end
         local ok = Framework.GiveWeapon(src, reward.item, reward.amount or 1)
         if not ok then
             print(('[DJFIVEM-Battlepass] weapon grant failed src=%s item=%s — check inventory items'):format(src, reward.item))

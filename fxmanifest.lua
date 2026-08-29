@@ -26,6 +26,7 @@ files {
     'html/index.html',
     'html/style.css',
     'html/script.js',
+    'html/tiers.json',
     'html/icons/*.svg',
     'html/icons/*.png',
     'html/icons/*.webp'

@@ -498,12 +498,12 @@ body.preview::before {
 
 .card-name {
   text-align: center;
-  font-size: 0.82rem;
+  font-size: 0.78rem;
   font-weight: 700;
-  padding: 0 0.4rem;
-  white-space: nowrap;
+  padding: 0 0.45rem 0.15rem;
+  line-height: 1.15;
+  max-height: 2.4em;
   overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .card-tier {
@@ -531,6 +531,23 @@ body.preview::before {
 
 .card.claimed .card-check { display: grid; }
 .card-check svg { width: 14px; height: 14px; }
+
+.card-qty {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  color: #08140c;
+  background: rgba(255, 255, 255, 0.88);
+  border-radius: 4px;
+  padding: 0.12rem 0.32rem;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.card.claimed .card-qty { left: 34px; }
 
 .card-lock {
   position: absolute;
