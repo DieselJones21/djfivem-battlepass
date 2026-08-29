@@ -105,7 +105,7 @@ body.preview::before {
 .header-stats {
   margin-top: 0.85rem;
   display: flex;
-  gap: 2.4rem;
+  gap: min(8vw, 7rem);
   justify-content: center;
   font-size: 0.82rem;
   letter-spacing: 0.28em;
@@ -234,6 +234,8 @@ body.preview::before {
   border-radius: 4px;
   padding: 0.18rem 0.4rem;
   display: none;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .xp-mult.on { display: block; }
@@ -468,6 +470,7 @@ body.preview::before {
   overflow: hidden;
   cursor: pointer;
   transition: transform 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+  padding-bottom: 26px;
 }
 
 .card:hover { transform: translateY(-4px); }
@@ -535,6 +538,13 @@ body.preview::before {
   display: none;
   place-items: center;
   color: rgba(255,255,255,0.86);
+  pointer-events: none;
+}
+
+.card-next,
+.card-check,
+.preview-glow {
+  pointer-events: none;
 }
 
 .card.locked .card-lock { display: grid; }

@@ -6,7 +6,6 @@ const LOCK_SVG = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 10V8a
 let state = null;
 let selectedTier = 1;
 let endsAt = 0;
-let dragging = false;
 
 function resourceName() {
   try {
@@ -106,7 +105,7 @@ function renderLeft() {
   const total = state.totalTiers || 28;
   const unlocked = state.unlocked || 0;
   const claimed = state.claimedCount || claimedSet().size;
-  const level = Math.max(1, unlocked || 1);
+  const level = unlocked >= total ? total : Math.max(1, unlocked + 1);
   $('levelValue').textContent = `LEVEL ${level}`;
   $('tierLine').textContent = `Tier ${unlocked} / ${total}`;
   const into = state.xpIntoTier || 0;
@@ -170,12 +169,13 @@ function renderPreview() {
     btn.classList.add('ended');
     btn.disabled = true;
   } else {
-    btn.textContent = 'CLAIM REWARD';
+    btn.textContent = '✓  CLAIM REWARD';
   }
 }
 
 function renderTrack() {
   const track = $('track');
+  const keepScroll = track.scrollLeft;
   const claimed = claimedSet();
   track.innerHTML = (state.tiers || []).map((t) => {
     const locked = isLocked(t.tier);
@@ -212,6 +212,7 @@ function renderTrack() {
   const all = $('claimAllBtn');
   all.textContent = n > 0 ? `CLAIM ALL (${n})` : 'CLAIM ALL';
   all.disabled = n === 0;
+  track.scrollLeft = keepScroll;
 }
 
 function render() {
@@ -296,14 +297,6 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-document.addEventListener('click', (e) => {
-  const card = e.target.closest('.card');
-  if (card) {
-    selectTier(card.dataset.tier, false);
-    return;
-  }
-});
-
 $('claimBtn').addEventListener('click', () => {
   const t = currentReward();
   if (!t) return;
@@ -333,37 +326,42 @@ $('claimAllBtn').addEventListener('click', () => {
   let startX = 0;
   let scroll = 0;
   let moved = false;
+  let active = false;
+  let pendingTier = null;
+
   el.addEventListener('pointerdown', (e) => {
-    dragging = true;
+    if (e.button !== 0) return;
+    const card = e.target.closest('.card');
+    pendingTier = card ? Number(card.dataset.tier) : null;
+    active = true;
     moved = false;
     startX = e.clientX;
     scroll = el.scrollLeft;
     el.classList.add('dragging');
     el.setPointerCapture(e.pointerId);
   });
+
   el.addEventListener('pointermove', (e) => {
-    if (!dragging) return;
+    if (!active) return;
     const dx = e.clientX - startX;
-    if (Math.abs(dx) > 4) moved = true;
-    el.scrollLeft = scroll - dx;
+    if (Math.abs(dx) > 8) moved = true;
+    if (moved) el.scrollLeft = scroll - dx;
   });
-  const end = (e) => {
-    if (!dragging) return;
-    dragging = false;
+
+  const end = () => {
+    if (!active) return;
+    active = false;
     el.classList.remove('dragging');
-    if (moved) {
-      e.preventDefault();
-      e.stopPropagation();
-    }
+    if (!moved && pendingTier) selectTier(pendingTier, false);
+    pendingTier = null;
   };
+
   el.addEventListener('pointerup', end);
-  el.addEventListener('pointercancel', end);
-  el.addEventListener('click', (e) => {
-    if (moved) {
-      e.stopPropagation();
-      moved = false;
-    }
-  }, true);
+  el.addEventListener('pointercancel', () => {
+    active = false;
+    pendingTier = null;
+    el.classList.remove('dragging');
+  });
 })();
 
 setInterval(() => {

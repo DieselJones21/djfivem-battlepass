@@ -180,6 +180,7 @@ local function buildPayload(src)
     local claimed = claimedSet(row.claimed)
     local claimedCount = 0
     for _ in pairs(claimed) do claimedCount = claimedCount + 1 end
+    local level = unlocked >= #Config.Tiers and #Config.Tiers or (unlocked + 1)
 
     return {
         title = Config.ResourceTitle,
@@ -192,7 +193,7 @@ local function buildPayload(src)
         xpPerTier = per,
         xpIntoTier = into,
         maxXp = maxXp(),
-        level = math.min(#Config.Tiers, math.max(1, unlocked > 0 and unlocked or 1)),
+        level = level,
         unlocked = unlocked,
         claimed = row.claimed,
         claimedCount = claimedCount,
