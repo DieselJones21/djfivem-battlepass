@@ -18,9 +18,14 @@
       <h1 class="header-title">BATTLE PASS</h1>
       <p class="header-sub" id="seasonLabel">BATTLE PASS C1S1</p>
       <div class="header-stats">
-        <span id="pctComplete">0% COMPLETE</span>
-        <span class="header-gap"></span>
-        <span id="claimedHeader">0 / 28 CLAIMED</span>
+        <div class="header-metric">
+          <span id="pctComplete">0% COMPLETE</span>
+          <div class="header-bar"><div class="header-bar-fill" id="pctFill"></div></div>
+        </div>
+        <div class="header-metric">
+          <span id="claimedHeader">0 / 28 CLAIMED</span>
+          <div class="header-bar"><div class="header-bar-fill" id="claimedFill"></div></div>
+        </div>
       </div>
     </header>
 
@@ -33,7 +38,10 @@
       <div class="level-card">
         <div class="level-kicker">CURRENT LEVEL</div>
         <div class="level-value" id="levelValue">LEVEL 1</div>
-        <div class="level-timer" id="seasonTimer">30d 00h 00m 00s</div>
+        <div class="level-timer">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/><path d="M12 8v5l3 2"/></svg>
+          <span id="seasonTimer">30d 00h 00m 00s</span>
+        </div>
         <div class="level-tier" id="tierLine">Tier 0 / 28</div>
         <div class="xp-row">
           <div class="xp-bar">
@@ -91,7 +99,7 @@
       <div class="preview-tags" id="previewTags"></div>
       <h2 class="preview-name" id="previewName">SELECT A TIER</h2>
       <p class="preview-desc" id="previewDesc">Browse the Chapter 1 Season 1 track.</p>
-      <div class="preview-type" id="previewType">Item</div>
+      <div class="preview-type" id="previewType">TYPE: Item</div>
       <button class="claim-btn" id="claimBtn" type="button">CLAIM REWARD</button>
     </aside>
 

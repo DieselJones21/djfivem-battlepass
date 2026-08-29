@@ -87,8 +87,59 @@ function typeLabel(t) {
   return 'Item';
 }
 
-function iconSrc(t) {
-  return `icons/${t.icon || ('tier_' + String(t.tier).padStart(2, '0') + '.svg')}`;
+function fallbackIcon(t) {
+  return `icons/${(t && t.icon) || ('tier_' + String((t && t.tier) || 1).padStart(2, '0') + '.svg')}`;
+}
+
+function inventoryImageNames(item) {
+  if (!item) return [];
+  const names = new Set([item, String(item).toLowerCase()]);
+  const lower = String(item).toLowerCase();
+  if (lower.startsWith('weapon_')) names.add(lower);
+  return [...names];
+}
+
+function inventoryImageUrls(item) {
+  const resource = (state && state.imageResource) || 'ox_inventory';
+  const folder = (state && state.imageFolder) || 'web/images';
+  const urls = [];
+  inventoryImageNames(item).forEach((name) => {
+    ['png', 'webp', 'jpg'].forEach((ext) => {
+      urls.push(`nui://${resource}/${folder}/${name}.${ext}`);
+      urls.push(`https://cfx-nui-${resource}/${folder}/${name}.${ext}`);
+    });
+  });
+  return urls;
+}
+
+function setItemImage(img, t) {
+  if (!img || !t) return;
+  const fallback = fallbackIcon(t);
+  img.onerror = null;
+  if (!IN_FIVEM || !t.item) {
+    img.src = fallback;
+    return;
+  }
+  const queue = inventoryImageUrls(t.item);
+  let i = 0;
+  const next = () => {
+    if (i >= queue.length) {
+      img.onerror = null;
+      img.src = fallback;
+      return;
+    }
+    img.src = queue[i++];
+  };
+  img.onerror = next;
+  next();
+}
+
+function bindItemImages(root) {
+  (root || document).querySelectorAll('img[data-item-tier]').forEach((img) => {
+    const tier = Number(img.dataset.itemTier);
+    const t = (state.tiers || []).find((row) => row.tier === tier);
+    setItemImage(img, t);
+  });
 }
 
 function currentReward() {
@@ -110,6 +161,8 @@ function renderHeader() {
   $('seasonLabel').textContent = state.seasonLabel || `BATTLE PASS C${state.chapter}S${state.season}`;
   $('pctComplete').textContent = `${pct}% COMPLETE`;
   $('claimedHeader').textContent = `${claimed} / ${total} CLAIMED`;
+  if ($('pctFill')) $('pctFill').style.width = `${Math.min(100, pct)}%`;
+  if ($('claimedFill')) $('claimedFill').style.width = `${Math.min(100, (claimed / total) * 100)}%`;
 }
 
 function renderLeft() {
@@ -151,11 +204,13 @@ function renderLeft() {
 function renderPreview() {
   const t = currentReward();
   if (!t) return;
-  $('previewImage').src = iconSrc(t);
+  const preview = $('previewImage');
+  preview.dataset.itemTier = String(t.tier);
+  setItemImage(preview, t);
   $('previewName').textContent = t.name.toUpperCase();
   $('previewDesc').textContent = t.description || '';
   const qty = Number(t.amount) > 1 ? `  ·  x${t.amount}` : '';
-  $('previewType').textContent = `${typeLabel(t)}${qty}`;
+  $('previewType').textContent = `TYPE: ${typeLabel(t)}${qty}`;
   $('previewTags').innerHTML = [
     `<span class="tag ${rarityClass(t.rarity)}">${(t.rarity || 'common').toUpperCase()}</span>`,
     `<span class="tag tier">TIER ${t.tier}</span>`,
@@ -201,7 +256,7 @@ function renderTrack() {
         <div class="card-check">${CHECK_SVG}</div>
         ${qty}
         <div class="card-tier">${t.tier}</div>
-        <div class="card-art"><img src="${iconSrc(t)}" alt="" /></div>
+        <div class="card-art"><img data-item-tier="${t.tier}" alt="" /></div>
         <div class="card-name">${t.name}</div>
         <div class="card-lock">${LOCK_SVG}</div>
         <div class="card-flag free">FREE</div>
@@ -225,6 +280,7 @@ function renderTrack() {
   all.textContent = n > 0 ? `CLAIM ALL (${n})` : 'CLAIM ALL';
   all.disabled = n === 0;
   track.scrollLeft = keepScroll;
+  bindItemImages(track);
 }
 
 function render() {
@@ -402,6 +458,8 @@ function mockState(tiers) {
     claimedCount: claimed.length,
     premium: false,
     premiumMultiplier: 2,
+    imageResource: 'ox_inventory',
+    imageFolder: 'web/images',
     remainingSeconds: 30 * 24 * 60 * 60 - 3600,
     totalTiers: tiers.length || 28,
     closeKey: 'ESC',

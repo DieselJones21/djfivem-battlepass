@@ -48,7 +48,7 @@ Pet Pug is late (tier 26). **WEAPON_4THARP** is last (tier 28). Quantities with 
 | 27 | Pink Energy | `pink_energy` | 50 |
 | 28 | 4th ARP | `WEAPON_4THARP` | 1 |
 
-These names must exist in your inventory (`ox_inventory` / QB / ESX). Weapons are granted as inventory items first (exact name, then lowercase).
+These names must exist in your inventory. Item art loads from `ox_inventory/web/images/{item}.png` (then `.webp` / lowercase). Missing files fall back to the built-in SVG. Set `Config.InventoryImageResource` / `Config.InventoryImageFolder` if your path differs. Weapons grant as inventory items first (exact name, then lowercase).
 
 ## Going live
 

@@ -199,6 +199,8 @@ local function buildPayload(src)
         claimedCount = claimedCount,
         premium = row.premium and true or false,
         allFree = Config.AllTiersFree and true or false,
+        imageResource = Config.InventoryImageResource or 'ox_inventory',
+        imageFolder = Config.InventoryImageFolder or 'web/images',
         premiumMultiplier = Config.PremiumXpMultiplier or 2.0,
         remainingSeconds = math.max(0, (endsAt or now) - now),
         seasonEndsAt = endsAt,

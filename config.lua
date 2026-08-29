@@ -37,6 +37,10 @@ Config.PremiumCommand = 'bppgive'
 Config.Framework = 'auto' -- 'auto' | 'qb' | 'qbx' | 'esx' | 'standalone'
 Config.Inventory = 'auto' -- 'auto' | 'ox' | 'qb' | 'esx' | 'none'
 
+-- Item icons: ox_inventory/web/images/{item}.png (nui://). Falls back to html/icons/.
+Config.InventoryImageResource = 'ox_inventory'
+Config.InventoryImageFolder = 'web/images'
+
 -- Notifications: ox_lib if started, otherwise native GTA help text.
 Config.Notify = 'auto'
 
