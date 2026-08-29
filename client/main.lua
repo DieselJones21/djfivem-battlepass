@@ -2,31 +2,38 @@ local nuiOpen = false
 local lastCoords = vector3(0.0, 0.0, 0.0)
 local lastMovedAt = GetGameTimer()
 local spawned = false
+local lastToggleAt = 0
 
 local function nui(payload)
     SendNUIMessage(payload)
 end
 
-local function setOpen(state)
-    nuiOpen = state
-    SetNuiFocus(state, state)
+local function forceClosed()
+    nuiOpen = false
+    SetNuiFocus(false, false)
     SetNuiFocusKeepInput(false)
-    nui({ action = state and 'open' or 'close' })
+    nui({ action = 'close' })
+end
+
+local function setOpen(state)
+    nuiOpen = state and true or false
+    SetNuiFocus(nuiOpen, nuiOpen)
+    SetNuiFocusKeepInput(false)
+    if nuiOpen then
+        nui({ action = 'open' })
+    else
+        nui({ action = 'close' })
+    end
 end
 
 local function isPlayerInCity()
+    if not spawned then return false end
     if not NetworkIsPlayerActive(PlayerId()) then return false end
     if IsPauseMenuActive() then return false end
     local ped = PlayerPedId()
     if not DoesEntityExist(ped) or IsEntityDead(ped) then return false end
-    -- Player must have actually spawned into the world (not still in loading/multichar).
-    if not spawned and not HasCollisionLoadedAroundEntity(ped) then return false end
     return true
 end
-
-RegisterNetEvent('djfivem_battlepass:client:setSpawned', function(state)
-    spawned = state and true or false
-end)
 
 AddEventHandler('playerSpawned', function()
     spawned = true
@@ -38,7 +45,7 @@ end)
 
 RegisterNetEvent('QBCore:Client:OnPlayerUnload', function()
     spawned = false
-    if nuiOpen then setOpen(false) end
+    forceClosed()
 end)
 
 RegisterNetEvent('esx:playerLoaded', function()
@@ -47,10 +54,14 @@ end)
 
 RegisterNetEvent('esx:onPlayerLogout', function()
     spawned = false
-    if nuiOpen then setOpen(false) end
+    forceClosed()
 end)
 
 local function requestOpen()
+    local now = GetGameTimer()
+    if (now - lastToggleAt) < 450 then return end
+    lastToggleAt = now
+
     if nuiOpen then
         setOpen(false)
         return
@@ -70,28 +81,34 @@ RegisterKeyMapping('djfivem_battlepass', 'Open DJFIVEM Battle Pass', 'keyboard',
 
 RegisterNetEvent('djfivem_battlepass:client:open', function(payload)
     nui({
-        action = 'hydrate',
+        action = 'open',
         data = payload
     })
-    setOpen(true)
+    nuiOpen = true
+    SetNuiFocus(true, true)
+    SetNuiFocusKeepInput(false)
 end)
 
+-- Progress updates never open the menu. Only apply while it is already open.
 RegisterNetEvent('djfivem_battlepass:client:update', function(payload)
+    if not nuiOpen then return end
     nui({
-        action = 'hydrate',
+        action = 'update',
         data = payload
     })
 end)
 
 RegisterNetEvent('djfivem_battlepass:client:tierUp', function(tier, rewardName)
-    nui({
-        action = 'tierUp',
-        tier = tier,
-        name = rewardName
-    })
     BeginTextCommandThefeedPost('STRING')
     AddTextComponentSubstringPlayerName(('Battle Pass: Tier %d unlocked — %s'):format(tier, rewardName or ''))
     EndTextCommandThefeedPostTicker(false, true)
+    if nuiOpen then
+        nui({
+            action = 'tierUp',
+            tier = tier,
+            name = rewardName
+        })
+    end
 end)
 
 RegisterNetEvent('djfivem_battlepass:client:notify', function(message, nType)
@@ -101,11 +118,15 @@ RegisterNetEvent('djfivem_battlepass:client:notify', function(message, nType)
 end)
 
 RegisterNUICallback('close', function(_, cb)
-    setOpen(false)
+    forceClosed()
     cb({ ok = true })
 end)
 
 RegisterNUICallback('claim', function(data, cb)
+    if not nuiOpen then
+        cb({ ok = false })
+        return
+    end
     local tier = tonumber(data and data.tier)
     if not tier then
         cb({ ok = false })
@@ -116,16 +137,21 @@ RegisterNUICallback('claim', function(data, cb)
 end)
 
 RegisterNUICallback('claimAll', function(_, cb)
+    if not nuiOpen then
+        cb({ ok = false })
+        return
+    end
     TriggerServerEvent('djfivem_battlepass:server:claimAll')
     cb({ ok = true })
 end)
 
 RegisterNUICallback('ready', function(_, cb)
+    forceClosed()
     cb({ ok = true, inGame = true })
 end)
 
--- Keep mouse/camera locked while the pass is open. ESC closes.
 CreateThread(function()
+    forceClosed()
     while true do
         if nuiOpen then
             DisableControlAction(0, 1, true)
@@ -138,19 +164,18 @@ CreateThread(function()
             DisableControlAction(0, 199, true)
             DisableControlAction(0, 200, true)
             if IsDisabledControlJustReleased(0, 322) or IsControlJustReleased(0, 322) then
-                setOpen(false)
+                forceClosed()
             end
             Wait(0)
         else
-            Wait(400)
+            Wait(500)
         end
     end
 end)
 
--- City playtime XP: tick on the server only if the player is spawned and not AFK.
 CreateThread(function()
     while true do
-        Wait(1000)
+        Wait(2000)
         if isPlayerInCity() then
             local ped = PlayerPedId()
             local coords = GetEntityCoords(ped)
@@ -172,7 +197,6 @@ CreateThread(function()
         if isPlayerInCity() then
             local idleMs = GetGameTimer() - lastMovedAt
             local afkMs = (tonumber(Config.AfkTimeoutSeconds) or 180) * 1000
-            -- 0 disables the AFK gate so any spawned player in the city earns XP.
             if afkMs <= 0 or idleMs < afkMs then
                 TriggerServerEvent('djfivem_battlepass:server:tickXp')
             end
@@ -180,10 +204,15 @@ CreateThread(function()
     end
 end)
 
--- If the resource restarts while the player is already in the city.
+AddEventHandler('onClientResourceStart', function(res)
+    if res ~= GetCurrentResourceName() then return end
+    forceClosed()
+end)
+
 CreateThread(function()
-    Wait(2500)
-    if NetworkIsPlayerActive(PlayerId()) and DoesEntityExist(PlayerPedId()) then
+    Wait(1500)
+    if NetworkIsPlayerActive(PlayerId()) and DoesEntityExist(PlayerPedId()) and HasCollisionLoadedAroundEntity(PlayerPedId()) then
         spawned = true
     end
+    forceClosed()
 end)
