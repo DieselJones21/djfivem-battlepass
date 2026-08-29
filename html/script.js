@@ -6,6 +6,9 @@ const LOCK_SVG = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 10V8a
 let state = null;
 let selectedTier = 1;
 let endsAt = 0;
+let uiOpen = false;
+let trackBuilt = false;
+const imageCache = new Map();
 
 function resourceName() {
   try {
@@ -103,11 +106,13 @@ function inventoryImageUrls(item) {
   const resource = (state && state.imageResource) || 'ox_inventory';
   const folder = (state && state.imageFolder) || 'web/images';
   const urls = [];
+  const seen = new Set();
   inventoryImageNames(item).forEach((name) => {
-    ['png', 'webp', 'jpg'].forEach((ext) => {
-      urls.push(`nui://${resource}/${folder}/${name}.${ext}`);
-      urls.push(`https://cfx-nui-${resource}/${folder}/${name}.${ext}`);
-    });
+    const url = `nui://${resource}/${folder}/${name}.png`;
+    if (!seen.has(url)) {
+      seen.add(url);
+      urls.push(url);
+    }
   });
   return urls;
 }
@@ -115,8 +120,14 @@ function inventoryImageUrls(item) {
 function setItemImage(img, t) {
   if (!img || !t) return;
   const fallback = fallbackIcon(t);
+  const key = t.item || fallback;
   img.onerror = null;
+  if (imageCache.has(key)) {
+    img.src = imageCache.get(key);
+    return;
+  }
   if (!IN_FIVEM || !t.item) {
+    imageCache.set(key, fallback);
     img.src = fallback;
     return;
   }
@@ -125,10 +136,16 @@ function setItemImage(img, t) {
   const next = () => {
     if (i >= queue.length) {
       img.onerror = null;
+      imageCache.set(key, fallback);
       img.src = fallback;
       return;
     }
     img.src = queue[i++];
+  };
+  img.onload = function onOk() {
+    img.onload = null;
+    img.onerror = null;
+    imageCache.set(key, img.src);
   };
   img.onerror = next;
   next();
@@ -241,8 +258,38 @@ function renderPreview() {
   }
 }
 
-function renderTrack() {
+function updateClaimAll() {
+  const n = claimableCount();
+  const all = $('claimAllBtn');
+  all.textContent = n > 0 ? `CLAIM ALL (${n})` : 'CLAIM ALL';
+  all.disabled = n === 0;
+}
+
+function patchTrackClasses() {
+  const claimed = claimedSet();
+  document.querySelectorAll('#track .card').forEach((card) => {
+    const tier = Number(card.dataset.tier);
+    card.classList.toggle('locked', isLocked(tier));
+    card.classList.toggle('claimed', claimed.has(tier));
+    card.classList.toggle('selected', tier === selectedTier);
+  });
+  const total = state.totalTiers || 28;
+  const unlocked = state.unlocked || 0;
+  const fill = total <= 1 ? 0 : (unlocked / (total - 1)) * 100;
+  const bar = document.querySelector('#timeline .timeline-fill');
+  if (bar) bar.style.width = `${Math.min(100, fill)}%`;
+  document.querySelectorAll('#timeline .node').forEach((node, i) => {
+    node.classList.toggle('on', (i + 1) <= unlocked);
+  });
+  updateClaimAll();
+}
+
+function renderTrack(force) {
   const track = $('track');
+  if (trackBuilt && !force && track.children.length) {
+    patchTrackClasses();
+    return;
+  }
   const keepScroll = track.scrollLeft;
   const claimed = claimedSet();
   track.innerHTML = (state.tiers || []).map((t) => {
@@ -275,25 +322,24 @@ function renderTrack() {
     </div>
   `;
 
-  const n = claimableCount();
-  const all = $('claimAllBtn');
-  all.textContent = n > 0 ? `CLAIM ALL (${n})` : 'CLAIM ALL';
-  all.disabled = n === 0;
+  updateClaimAll();
   track.scrollLeft = keepScroll;
   bindItemImages(track);
+  trackBuilt = true;
 }
 
-function render() {
+function render(forceTrack) {
   if (!state) return;
   renderHeader();
   renderLeft();
-  renderTrack();
+  renderTrack(forceTrack);
   renderPreview();
 }
 
 function selectTier(tier, scroll) {
   selectedTier = Number(tier);
-  render();
+  patchTrackClasses();
+  renderPreview();
   if (scroll) {
     const el = document.querySelector(`.card[data-tier="${selectedTier}"]`);
     if (el) el.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
@@ -311,46 +357,51 @@ function pickDefaultTier(data) {
   return Math.max(1, unlocked || 1);
 }
 
+function hideOverlay() {
+  uiOpen = false;
+  document.getElementById('app').classList.add('hidden');
+}
+
 function openUi(data, preferTier) {
+  if (!data) return;
   state = data;
   endsAt = Date.now() + (data.remainingSeconds || 0) * 1000;
   selectedTier = preferTier || pickDefaultTier(data);
   if (selectedTier > (data.totalTiers || 28)) selectedTier = data.totalTiers;
+  uiOpen = true;
   document.getElementById('app').classList.remove('hidden');
-  render();
+  render(true);
   const current = document.querySelector(`.card[data-tier="${selectedTier}"]`);
   if (current) current.scrollIntoView({ inline: 'center', block: 'nearest' });
 }
 
 function closeUi() {
-  document.getElementById('app').classList.add('hidden');
-  post('close');
+  hideOverlay();
+  if (IN_FIVEM) post('close');
 }
 
-function hydrate(data) {
-  const wasOpen = !document.getElementById('app').classList.contains('hidden');
+function applyUpdate(data) {
+  if (!data) return;
   state = data;
   endsAt = Date.now() + (data.remainingSeconds || 0) * 1000;
-  if (wasOpen || !IN_FIVEM) {
-    document.getElementById('app').classList.remove('hidden');
-    render();
-  }
+  if (!uiOpen) return;
+  render(false);
 }
 
 window.addEventListener('message', (event) => {
   const msg = event.data || {};
   if (msg.action === 'open') {
-    document.getElementById('app').classList.remove('hidden');
-  } else if (msg.action === 'close') {
-    document.getElementById('app').classList.add('hidden');
-  } else if (msg.action === 'hydrate') {
-    if (document.getElementById('app').classList.contains('hidden')) {
-      openUi(msg.data);
-    } else {
-      hydrate(msg.data);
+    if (msg.data) openUi(msg.data);
+    else if (state) {
+      uiOpen = true;
+      document.getElementById('app').classList.remove('hidden');
     }
+  } else if (msg.action === 'close') {
+    hideOverlay();
+  } else if (msg.action === 'update' || msg.action === 'hydrate') {
+    applyUpdate(msg.data);
   } else if (msg.action === 'tierUp') {
-    toast(`TIER ${msg.tier} UNLOCKED  ·  ${msg.name || ''}`);
+    if (uiOpen) toast(`TIER ${msg.tier} UNLOCKED  ·  ${msg.name || ''}`);
   }
 });
 
@@ -433,11 +484,12 @@ $('claimAllBtn').addEventListener('click', () => {
 })();
 
 setInterval(() => {
-  if (!state) return;
+  if (!uiOpen || !state) return;
   const left = Math.max(0, Math.round((endsAt - Date.now()) / 1000));
   state.remainingSeconds = left;
-  $('seasonTimer').textContent = formatTimer(left);
-}, 250);
+  const el = $('seasonTimer');
+  if (el) el.textContent = formatTimer(left);
+}, 1000);
 
 function mockState(tiers) {
   const unlocked = 11;
@@ -475,5 +527,6 @@ if (!IN_FIVEM) {
     .then((tiers) => openUi(mockState(tiers), 11))
     .catch(() => openUi(mockState([]), 1));
 } else {
+  hideOverlay();
   post('ready');
 }

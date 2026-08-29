@@ -95,6 +95,8 @@ local function sqlQuery(query, params)
     return exports.oxmysql:query_async(query, params)
 end
 
+local persistQueue = {}
+
 local function persist(row)
     if dbReady() then
         sqlUpdate([[
@@ -118,6 +120,25 @@ local function persist(row)
     }
     saveJsonStore()
 end
+
+local function persistSoon(row)
+    if not row then return end
+    persistQueue[row.identifier] = row
+end
+
+local function flushPersist()
+    for _, row in pairs(persistQueue) do
+        persist(row)
+    end
+    persistQueue = {}
+end
+
+CreateThread(function()
+    while true do
+        Wait(15000)
+        flushPersist()
+    end
+end)
 
 local function fetchRow(identifier)
     if dbReady() then
@@ -244,7 +265,7 @@ local function addXp(src, amount, reason)
     local before = tierFromXp(row.xp)
     local cap = maxXp()
     row.xp = math.max(0, math.min(cap, row.xp + amount))
-    persist(row)
+    persistSoon(row)
 
     local after = tierFromXp(row.xp)
     if after > before then
@@ -357,6 +378,9 @@ end)
 
 AddEventHandler('playerDropped', function()
     local src = source
+    local row = players[src]
+    if row then persist(row) end
+    if row then persistQueue[row.identifier] = nil end
     players[src] = nil
     lastTick[src] = nil
 end)
@@ -400,18 +424,21 @@ RegisterNetEvent('djfivem_battlepass:server:claimAll', function()
     if not row then return end
     local claimed = 0
     for _, reward in ipairs(Config.Tiers) do
-        local ok = canClaim(row, reward.tier)
+        local ok, rewardOrErr = canClaim(row, reward.tier)
         if ok then
-            if claimTier(src, reward.tier) then
-                claimed = claimed + 1
-            end
+            grantReward(src, rewardOrErr)
+            row.claimed[#row.claimed + 1] = reward.tier
+            claimed = claimed + 1
         end
     end
     if claimed == 0 then
         Framework.Notify(src, 'Nothing to claim right now.', 'error')
-    else
-        Framework.Notify(src, ('Claimed %d reward%s.'):format(claimed, claimed == 1 and '' or 's'), 'success')
+        return
     end
+    table.sort(row.claimed)
+    persist(row)
+    push(src)
+    Framework.Notify(src, ('Claimed %d reward%s.'):format(claimed, claimed == 1 and '' or 's'), 'success')
 end)
 
 local function isAdmin(src)
