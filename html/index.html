@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DJFIVEM Battle Pass</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Teko:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app" class="hidden">
+    <div class="vignette"></div>
+    <div class="grain"></div>
+
+    <header class="header">
+      <h1 class="header-title">BATTLE PASS</h1>
+      <p class="header-sub" id="seasonLabel">BATTLE PASS C1S1</p>
+      <div class="header-stats">
+        <div class="header-metric">
+          <span id="pctComplete">0% COMPLETE</span>
+          <div class="header-bar"><div class="header-bar-fill" id="pctFill"></div></div>
+        </div>
+        <div class="header-metric">
+          <span id="claimedHeader">0 / 28 CLAIMED</span>
+          <div class="header-bar"><div class="header-bar-fill" id="claimedFill"></div></div>
+        </div>
+      </div>
+    </header>
+
+    <div class="brand">
+      <div class="brand-mark">DJFIVEM</div>
+      <div class="close-hint">PRESS <span class="key">ESC</span> TO CLOSE</div>
+    </div>
+
+    <aside class="left-panel">
+      <div class="level-card">
+        <div class="level-kicker">CURRENT LEVEL</div>
+        <div class="level-value" id="levelValue">LEVEL 1</div>
+        <div class="level-timer">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/><path d="M12 8v5l3 2"/></svg>
+          <span id="seasonTimer">30d 00h 00m 00s</span>
+        </div>
+        <div class="level-tier" id="tierLine">Tier 0 / 28</div>
+        <div class="xp-row">
+          <div class="xp-bar">
+            <div class="xp-fill" id="xpFill"></div>
+          </div>
+          <div class="xp-mult" id="xpMult">2X XP</div>
+        </div>
+        <div class="xp-meta" id="xpMeta">0 / 2000 XP</div>
+      </div>
+
+      <div class="summary-card">
+        <div class="summary-item">
+          <div class="summary-icon unlock">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0"/></svg>
+          </div>
+          <div>
+            <div class="summary-num" id="statUnlocked">0</div>
+            <div class="summary-lbl">Unlocked</div>
+          </div>
+        </div>
+        <div class="summary-item">
+          <div class="summary-icon claimed">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 12.5 10 17.5 19 7"/></svg>
+          </div>
+          <div>
+            <div class="summary-num" id="statClaimed">0</div>
+            <div class="summary-lbl">Claimed</div>
+          </div>
+        </div>
+        <div class="summary-item">
+          <div class="summary-icon remain">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/><path d="M12 8v5l3 2"/></svg>
+          </div>
+          <div>
+            <div class="summary-num" id="statRemain">28</div>
+            <div class="summary-lbl">Remaining</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="premium-card active" id="premiumCard">
+        <div class="premium-dot"></div>
+        <div>
+          <div class="premium-title" id="premiumTitle">ALL TIERS FREE</div>
+          <div class="premium-sub" id="premiumSub">Every unlocked reward is claimable. Earn XP by staying in the city.</div>
+        </div>
+      </div>
+    </aside>
+
+    <aside class="right-panel" id="previewPanel">
+      <div class="preview-art">
+        <img id="previewImage" alt="" />
+        <div class="preview-glow"></div>
+      </div>
+      <div class="preview-tags" id="previewTags"></div>
+      <h2 class="preview-name" id="previewName">SELECT A TIER</h2>
+      <p class="preview-desc" id="previewDesc">Browse the Chapter 1 Season 1 track.</p>
+      <div class="preview-type" id="previewType">TYPE: Item</div>
+      <button class="claim-btn" id="claimBtn" type="button">CLAIM REWARD</button>
+    </aside>
+
+    <section class="track-wrap">
+      <div class="track" id="track"></div>
+      <div class="timeline" id="timeline"></div>
+      <div class="track-footer">
+        <div class="track-hint">IN-CITY XP  ·  MOVE TO EARN  ·  30 DAY SEASON</div>
+        <div class="track-actions">
+          <button class="claim-all" id="claimAllBtn" type="button">CLAIM ALL</button>
+          <div class="drag-hint">DRAG TO SCROLL</div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="script.js"></script>
+</body>
+</html>
