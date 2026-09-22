@@ -30,14 +30,25 @@ local function detectInventory()
     return 'none'
 end
 
-CreateThread(function()
-    Wait(500)
+local function refreshAdapters()
     Framework.name = detectFramework()
     Framework.inventory = detectInventory()
+end
+
+function Framework.Refresh()
+    refreshAdapters()
+    return Framework.name, Framework.inventory
+end
+
+refreshAdapters()
+
+CreateThread(function()
+    Wait(500)
+    refreshAdapters()
     print(('[DJFIVEM-Battlepass] Framework=%s inventory=%s'):format(Framework.name, Framework.inventory))
 end)
 
-local QBCore, QBX, ESX
+local QBCore, ESX
 
 local function qb()
     if not QBCore then
@@ -69,9 +80,16 @@ local function esx()
     return ESX
 end
 
+local function qbPlayer(src)
+    if Framework.name == 'qbx' then
+        return qbxPlayer(src)
+    end
+    return qb() and qb().Functions.GetPlayer(src) or nil
+end
+
 function Framework.GetIdentifier(src)
     if Framework.name == 'qb' then
-        local player = qb() and qb().Functions.GetPlayer(src)
+        local player = qbPlayer(src)
         if player then return player.PlayerData.citizenid end
     elseif Framework.name == 'qbx' then
         local player = qbxPlayer(src)
@@ -81,31 +99,29 @@ function Framework.GetIdentifier(src)
         if xPlayer then return xPlayer.identifier end
     end
 
-    for _, id in ipairs(GetPlayerIdentifiers(src)) do
-        if id:sub(1, 8) == 'license:' then
-            return id
+    local identifiers = GetPlayerIdentifiers(src)
+    if type(identifiers) == 'table' then
+        for _, id in ipairs(identifiers) do
+            if type(id) == 'string' and id:sub(1, 8) == 'license:' then
+                return id
+            end
         end
     end
     return GetPlayerIdentifier(src, 0)
 end
 
 function Framework.GetName(src)
-    if Framework.name == 'qb' then
-        local player = qb() and qb().Functions.GetPlayer(src)
-        if player then
-            local c = player.PlayerData.charinfo or {}
-            return ((c.firstname or '') .. ' ' .. (c.lastname or '')):gsub('^%s+', ''):gsub('%s+$', '')
-        end
-    elseif Framework.name == 'qbx' then
-        local player = qbxPlayer(src)
+    if Framework.name == 'qb' or Framework.name == 'qbx' then
+        local player = qbPlayer(src)
         if player and player.PlayerData and player.PlayerData.charinfo then
             local c = player.PlayerData.charinfo
-            return ((c.firstname or '') .. ' ' .. (c.lastname or '')):gsub('^%s+', '')
+            local name = ((c.firstname or '') .. ' ' .. (c.lastname or '')):gsub('^%s+', ''):gsub('%s+$', '')
+            if name ~= '' then return name end
         end
     elseif Framework.name == 'esx' then
         local xPlayer = esx() and esx().GetPlayerFromId(src)
-        if xPlayer then
-            if xPlayer.getName then return xPlayer.getName() end
+        if xPlayer and xPlayer.getName then
+            return xPlayer.getName()
         end
     end
     return GetPlayerName(src) or ('ID ' .. tostring(src))
@@ -115,11 +131,13 @@ function Framework.HasItem(src, item, amount)
     amount = amount or 1
     if not item then return false end
     if Framework.inventory == 'ox' then
-        local count = exports.ox_inventory:Search(src, 'count', item) or 0
-        return count >= amount
+        local ok, count = pcall(function()
+            return exports.ox_inventory:Search(src, 'count', item) or 0
+        end)
+        return ok and (tonumber(count) or 0) >= amount
     end
     if Framework.name == 'qb' or Framework.name == 'qbx' then
-        local player = (Framework.name == 'qbx' and qbxPlayer(src)) or (qb() and qb().Functions.GetPlayer(src))
+        local player = qbPlayer(src)
         if not player then return false end
         local data = player.Functions.GetItemByName(item)
         return data and (data.amount or data.count or 0) >= amount
@@ -133,15 +151,27 @@ function Framework.HasItem(src, item, amount)
     return false
 end
 
-function Framework.AddItem(src, item, amount, metadata)
-    amount = amount or 1
+function Framework.CanCarry(src, item, amount)
+    amount = math.max(1, math.floor(tonumber(amount) or 1))
+    if not item then return false end
     if Framework.inventory == 'ox' then
-        return exports.ox_inventory:AddItem(src, item, amount, metadata)
+        local ok, can = pcall(function()
+            return exports.ox_inventory:CanCarryItem(src, item, amount)
+        end)
+        if ok then return can ~= false end
+        return true
+    end
+    return true
+end
+
+local function addInventoryItem(src, item, amount, metadata)
+    if Framework.inventory == 'ox' then
+        return exports.ox_inventory:AddItem(src, item, amount, metadata) and true or false
     end
     if Framework.name == 'qb' or Framework.name == 'qbx' then
-        local player = (Framework.name == 'qbx' and qbxPlayer(src)) or (qb() and qb().Functions.GetPlayer(src))
+        local player = qbPlayer(src)
         if not player then return false end
-        return player.Functions.AddItem(item, amount, false, metadata)
+        return player.Functions.AddItem(item, amount, false, metadata) and true or false
     end
     if Framework.name == 'esx' then
         local xPlayer = esx() and esx().GetPlayerFromId(src)
@@ -152,18 +182,23 @@ function Framework.AddItem(src, item, amount, metadata)
     return false
 end
 
+function Framework.AddItem(src, item, amount, metadata)
+    amount = math.max(1, math.floor(tonumber(amount) or 1))
+    if type(item) ~= 'string' or item == '' then return false end
+    if addInventoryItem(src, item, amount, metadata) then return true end
+    local lower = item:lower()
+    if lower ~= item then
+        return addInventoryItem(src, lower, amount, metadata)
+    end
+    return false
+end
+
 function Framework.AddMoney(src, amount)
     amount = math.floor(tonumber(amount) or 0)
     if amount <= 0 then return false end
 
-    if Framework.name == 'qb' then
-        local player = qb() and qb().Functions.GetPlayer(src)
-        if not player then return false end
-        player.Functions.AddMoney('cash', amount, 'djfivem-battlepass')
-        return true
-    end
-    if Framework.name == 'qbx' then
-        local player = qbxPlayer(src)
+    if Framework.name == 'qb' or Framework.name == 'qbx' then
+        local player = qbPlayer(src)
         if not player then return false end
         player.Functions.AddMoney('cash', amount, 'djfivem-battlepass')
         return true
@@ -175,7 +210,6 @@ function Framework.AddMoney(src, amount)
         return true
     end
 
-    -- Standalone: try ox_inventory cash, otherwise notify only.
     if Framework.inventory == 'ox' then
         local ok = exports.ox_inventory:AddItem(src, 'money', amount)
         if ok then return true end
@@ -185,18 +219,25 @@ end
 
 function Framework.GiveWeapon(src, weapon, ammo)
     ammo = ammo or 1
-    local name = weapon
-    if type(name) == 'string' then
-        name = name:lower()
-    end
+    if type(weapon) ~= 'string' or weapon == '' then return false end
 
     if Framework.inventory == 'ox' then
-        return exports.ox_inventory:AddItem(src, weapon, 1)
+        if exports.ox_inventory:AddItem(src, weapon, 1) then return true end
+        local lower = weapon:lower()
+        if lower ~= weapon then
+            return exports.ox_inventory:AddItem(src, lower, 1) and true or false
+        end
+        return false
     end
     if Framework.name == 'qb' or Framework.name == 'qbx' then
-        local player = (Framework.name == 'qbx' and qbxPlayer(src)) or (qb() and qb().Functions.GetPlayer(src))
+        local player = qbPlayer(src)
         if not player then return false end
-        return player.Functions.AddItem(weapon, 1)
+        if player.Functions.AddItem(weapon, 1) then return true end
+        local lower = weapon:lower()
+        if lower ~= weapon then
+            return player.Functions.AddItem(lower, 1) and true or false
+        end
+        return false
     end
     if Framework.name == 'esx' then
         local xPlayer = esx() and esx().GetPlayerFromId(src)

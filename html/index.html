@@ -6,17 +6,20 @@
   <title>DJFIVEM Battle Pass</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Teko:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;600;700;800&family=Rajdhani:wght@500;600;700&family=Teko:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <div id="app" class="hidden">
-    <div class="vignette"></div>
-    <div class="grain"></div>
+    <div class="fx-vignette"></div>
+    <div class="fx-aurora"></div>
+    <div class="fx-grid"></div>
+    <div class="fx-scan"></div>
 
     <header class="header">
+      <div class="header-kicker" id="seasonLabel">CHAPTER 1  ·  SEASON 1</div>
       <h1 class="header-title">BATTLE PASS</h1>
-      <p class="header-sub" id="seasonLabel">BATTLE PASS C1S1</p>
+      <div class="header-rule"></div>
       <div class="header-stats">
         <div class="header-metric">
           <span id="pctComplete">0% COMPLETE</span>
@@ -24,14 +27,14 @@
         </div>
         <div class="header-metric">
           <span id="claimedHeader">0 / 28 CLAIMED</span>
-          <div class="header-bar"><div class="header-bar-fill" id="claimedFill"></div></div>
+          <div class="header-bar"><div class="header-bar-fill gold" id="claimedFill"></div></div>
         </div>
       </div>
     </header>
 
     <div class="brand">
       <div class="brand-mark">DJFIVEM</div>
-      <div class="close-hint">PRESS <span class="key">ESC</span> TO CLOSE</div>
+      <div class="close-hint">PRESS <span class="key" id="closeKey">ESC</span> TO CLOSE</div>
     </div>
 
     <aside class="left-panel">
@@ -47,7 +50,7 @@
           <div class="xp-bar">
             <div class="xp-fill" id="xpFill"></div>
           </div>
-          <div class="xp-mult" id="xpMult">2X XP</div>
+          <div class="xp-mult" id="xpMult">CITY XP</div>
         </div>
         <div class="xp-meta" id="xpMeta">0 / 2000 XP</div>
       </div>
@@ -92,9 +95,11 @@
     </aside>
 
     <aside class="right-panel" id="previewPanel">
-      <div class="preview-art">
-        <img id="previewImage" alt="" />
-        <div class="preview-glow"></div>
+      <div class="preview-frame" id="previewFrame">
+        <div class="preview-art">
+          <img id="previewImage" alt="" />
+          <div class="preview-glow"></div>
+        </div>
       </div>
       <div class="preview-tags" id="previewTags"></div>
       <h2 class="preview-name" id="previewName">SELECT A TIER</h2>

@@ -1,8 +1,13 @@
 local players = {} -- [src] = { identifier, xp, claimed = {}, premium = bool }
 local lastTick = {} -- [src] = os.time()
+local claiming = {} -- [src] = true while a claim is in flight
 local jsonStore = {}
 local usingMysql = false
 local resourceName = GetCurrentResourceName()
+local persistQueue = {}
+local publicTierCache = nil
+local tiersByNumber = {}
+local maxXpCached = nil
 
 local function resourceStarted(name)
     local state = GetResourceState(name)
@@ -18,6 +23,21 @@ local function decode(str, fallback)
     local ok, data = pcall(json.decode, str)
     if ok and type(data) == 'table' then return data end
     return fallback
+end
+
+local function rebuildTierIndex()
+    tiersByNumber = {}
+    for _, t in ipairs(Config.Tiers or {}) do
+        if t.tier then
+            tiersByNumber[t.tier] = t
+        end
+    end
+    publicTierCache = nil
+    maxXpCached = nil
+end
+
+local function getReward(tier)
+    return tiersByNumber[tonumber(tier)]
 end
 
 local function parseSeasonStart()
@@ -38,10 +58,16 @@ local function parseSeasonStart()
     })
 end
 
+local seasonStartAt, seasonEndsAt
+
+local function refreshSeasonWindow()
+    seasonStartAt = parseSeasonStart()
+    seasonEndsAt = seasonStartAt + (tonumber(Config.SeasonDurationDays) or 30) * 24 * 60 * 60
+end
+
 local function seasonWindow()
-    local startAt = parseSeasonStart()
-    local endsAt = startAt + (tonumber(Config.SeasonDurationDays) or 30) * 24 * 60 * 60
-    return startAt, endsAt
+    if not seasonStartAt then refreshSeasonWindow() end
+    return seasonStartAt, seasonEndsAt
 end
 
 local function seasonActive()
@@ -51,21 +77,26 @@ local function seasonActive()
 end
 
 local function maxXp()
-    return (#Config.Tiers) * (tonumber(Config.XpPerTier) or 2000)
+    if not maxXpCached then
+        maxXpCached = (#Config.Tiers) * (tonumber(Config.XpPerTier) or 2000)
+    end
+    return maxXpCached
 end
 
 local function tierFromXp(xp)
     local per = tonumber(Config.XpPerTier) or 2000
     local t = math.floor((tonumber(xp) or 0) / per)
     if t < 0 then t = 0 end
-    if t > #Config.Tiers then t = #Config.Tiers end
+    local cap = #Config.Tiers
+    if t > cap then t = cap end
     return t
 end
 
 local function claimedSet(list)
     local set = {}
     for _, n in ipairs(list or {}) do
-        set[tonumber(n)] = true
+        local tier = tonumber(n)
+        if tier then set[tier] = true end
     end
     return set
 end
@@ -95,21 +126,25 @@ local function sqlQuery(query, params)
     return exports.oxmysql:query_async(query, params)
 end
 
-local persistQueue = {}
-
 local function persist(row)
+    if not row or not row.identifier then return end
     if dbReady() then
-        sqlUpdate([[
-            INSERT INTO djfivem_battlepass (identifier, season, xp, claimed, premium)
-            VALUES (?, ?, ?, ?, ?)
-            ON DUPLICATE KEY UPDATE xp = VALUES(xp), claimed = VALUES(claimed), premium = VALUES(premium)
-        ]], {
-            row.identifier,
-            Config.SeasonId,
-            row.xp,
-            encode(row.claimed),
-            row.premium and 1 or 0
-        })
+        local ok, err = pcall(function()
+            sqlUpdate([[
+                INSERT INTO djfivem_battlepass (identifier, season, xp, claimed, premium)
+                VALUES (?, ?, ?, ?, ?)
+                ON DUPLICATE KEY UPDATE xp = VALUES(xp), claimed = VALUES(claimed), premium = VALUES(premium)
+            ]], {
+                row.identifier,
+                Config.SeasonId,
+                row.xp,
+                encode(row.claimed),
+                row.premium and 1 or 0
+            })
+        end)
+        if not ok then
+            print(('[DJFIVEM-Battlepass] persist failed identifier=%s err=%s'):format(row.identifier, tostring(err)))
+        end
         return
     end
     jsonStore[row.identifier] = jsonStore[row.identifier] or {}
@@ -127,6 +162,7 @@ local function persistSoon(row)
 end
 
 local function flushPersist()
+    if next(persistQueue) == nil then return end
     for _, row in pairs(persistQueue) do
         persist(row)
     end
@@ -142,11 +178,8 @@ end)
 
 local function fetchRow(identifier)
     if dbReady() then
-        local row = sqlSingle(
-            'SELECT xp, claimed, premium FROM djfivem_battlepass WHERE identifier = ? AND season = ?',
-            { identifier, Config.SeasonId }
-        )
-        if not row then
+        local ok, row = pcall(sqlSingle, 'SELECT xp, claimed, premium FROM djfivem_battlepass WHERE identifier = ? AND season = ?', { identifier, Config.SeasonId })
+        if not ok or not row then
             return { identifier = identifier, xp = 0, claimed = {}, premium = false }
         end
         return {
@@ -169,9 +202,41 @@ local function fetchRow(identifier)
     }
 end
 
+local function resolveOxItem(item)
+    if type(item) ~= 'string' or item == '' then
+        return nil, nil
+    end
+    if not resourceStarted('ox_inventory') then
+        return nil, item
+    end
+
+    local function lookup(name)
+        local ok, def = pcall(function()
+            return exports.ox_inventory:Items(name)
+        end)
+        if ok and type(def) == 'table' and (def.name or def.label) then
+            return def
+        end
+        return nil
+    end
+
+    local def = lookup(item) or lookup(item:lower()) or lookup(item:upper())
+    if not def then
+        return nil, item, false
+    end
+
+    local image = def.client and def.client.image
+    if type(image) ~= 'string' or image == '' then
+        image = nil
+    end
+    return image, def.name or item, true
+end
+
 local function publicTiers()
+    if publicTierCache then return publicTierCache end
     local list = {}
     for _, t in ipairs(Config.Tiers) do
+        local oxImage, imageName = resolveOxItem(t.item)
         list[#list + 1] = {
             tier = t.tier,
             name = t.name,
@@ -181,9 +246,12 @@ local function publicTiers()
             rarity = t.rarity,
             premium = t.premium and true or false,
             icon = t.icon,
-            item = t.item
+            item = t.item,
+            oxImage = oxImage,
+            imageName = imageName or t.item
         }
     end
+    publicTierCache = list
     return list
 end
 
@@ -197,7 +265,7 @@ local function buildPayload(src)
     if unlocked >= #Config.Tiers then
         into = per
     end
-    local _, endsAt, now = select(2, seasonActive())
+    local _, startAt, endsAt, now = seasonActive()
     local claimed = claimedSet(row.claimed)
     local claimedCount = 0
     for _ in pairs(claimed) do claimedCount = claimedCount + 1 end
@@ -222,9 +290,11 @@ local function buildPayload(src)
         allFree = Config.AllTiersFree and true or false,
         imageResource = Config.InventoryImageResource or 'ox_inventory',
         imageFolder = Config.InventoryImageFolder or 'web/images',
+        imageExts = Config.InventoryImageExtensions or { 'png', 'webp' },
         premiumMultiplier = Config.PremiumXpMultiplier or 2.0,
         remainingSeconds = math.max(0, (endsAt or now) - now),
         seasonEndsAt = endsAt,
+        seasonStartsAt = startAt,
         serverNow = now,
         totalTiers = #Config.Tiers,
         closeKey = Config.CloseKeyLabel,
@@ -238,7 +308,6 @@ local function ensurePlayer(src)
     local identifier = Framework.GetIdentifier(src)
     if not identifier then return nil end
     local row = fetchRow(identifier)
-    -- Premium item in inventory also counts.
     if not row.premium and Config.PremiumItem and Config.PremiumItem ~= '' then
         if Framework.HasItem(src, Config.PremiumItem, 1) then
             row.premium = true
@@ -270,7 +339,7 @@ local function addXp(src, amount, reason)
     local after = tierFromXp(row.xp)
     if after > before then
         for t = before + 1, after do
-            local reward = Config.Tiers[t]
+            local reward = getReward(t)
             TriggerClientEvent('djfivem_battlepass:client:tierUp', src, t, reward and reward.name or '')
         end
     end
@@ -279,45 +348,47 @@ local function addXp(src, amount, reason)
 end
 
 local function canClaim(row, tier)
-    local reward = Config.Tiers[tier]
+    local reward = getReward(tier)
     if not reward then return false, 'invalid' end
     if claimedSet(row.claimed)[tier] then return false, 'claimed' end
     if tierFromXp(row.xp) < tier then return false, 'locked' end
     if reward.premium and not row.premium and not Config.AllTiersFree then
         return false, 'premium'
     end
-    local _, _, endsAt, now = seasonActive()
-    -- Allow claiming after start; block after season ends.
-    if now < select(1, seasonWindow()) then return false, 'not_started' end
+    local active, startAt, endsAt, now = seasonActive()
+    if now < startAt then return false, 'not_started' end
     if now >= endsAt then return false, 'ended' end
-    return true, reward
-end
-
-local function tryGiveItem(src, item, amount)
-    if not item or item == '' then return false end
-    if Framework.AddItem(src, item, amount) then return true end
-    local lower = item:lower()
-    if lower ~= item and Framework.AddItem(src, lower, amount) then return true end
-    return false
+    return true, reward, active
 end
 
 local function grantReward(src, reward)
+    if Framework.inventory == 'none' or Framework.name == 'standalone' then
+        Framework.Refresh()
+    end
     if reward.type == 'money' then
         local ok = Framework.AddMoney(src, reward.amount)
         if not ok then
-            print(('[DJFIVEM-Battlepass] money grant fallback src=%s amount=%s'):format(src, reward.amount))
+            print(('[DJFIVEM-Battlepass] money grant failed src=%s amount=%s'):format(src, reward.amount))
+            return false, 'give_failed'
         end
         return true
     end
+
     if reward.type == 'weapon' then
-        -- Custom WEAPON_* items are usually inventory entries. Try the item first.
-        if tryGiveItem(src, reward.item, reward.amount or 1) then return true end
-        local ok = Framework.GiveWeapon(src, reward.item, reward.amount or 1)
-        if not ok then
-            print(('[DJFIVEM-Battlepass] weapon grant failed src=%s item=%s — check inventory items'):format(src, reward.item))
+        local _, _, exists = resolveOxItem(reward.item)
+        if Framework.inventory == 'ox' and exists == false then
+            print(('[DJFIVEM-Battlepass] weapon grant failed src=%s item=%s — item missing from ox_inventory'):format(src, reward.item))
+            return false, 'give_failed'
         end
-        return true
+        if not Framework.CanCarry(src, reward.item, reward.amount or 1) then
+            return false, 'no_space'
+        end
+        if Framework.AddItem(src, reward.item, reward.amount or 1) then return true end
+        if Framework.GiveWeapon(src, reward.item, reward.amount or 1) then return true end
+        print(('[DJFIVEM-Battlepass] weapon grant failed src=%s item=%s — check ox_inventory items'):format(src, reward.item))
+        return false, 'give_failed'
     end
+
     if reward.type == 'vehicle' then
         if reward.item and reward.item ~= '' then
             Framework.AddItem(src, 'battlepass_vehicle_voucher', 1, {
@@ -329,22 +400,53 @@ local function grantReward(src, reward)
         TriggerEvent(Config.VehicleGrantEvent, src, reward.item, reward)
         return true
     end
-    -- item (default)
+
+    local _, _, exists = resolveOxItem(reward.item)
+    if Framework.inventory == 'ox' and exists == false then
+        print(('[DJFIVEM-Battlepass] item grant failed src=%s item=%s — item missing from ox_inventory'):format(src, tostring(reward.item)))
+        return false, 'give_failed'
+    end
+    if not Framework.CanCarry(src, reward.item, reward.amount or 1) then
+        return false, 'no_space'
+    end
     local ok = Framework.AddItem(src, reward.item, reward.amount or 1)
     if not ok then
-        print(('[DJFIVEM-Battlepass] item grant failed src=%s item=%s x%s — add the item to your inventory'):format(
+        print(('[DJFIVEM-Battlepass] item grant failed src=%s item=%s x%s — add the item to ox_inventory'):format(
             src, tostring(reward.item), tostring(reward.amount)
         ))
+        return false, 'give_failed'
     end
     return true
 end
 
+local grantErrors = {
+    no_space = 'Not enough inventory space for that reward.',
+    give_failed = 'Could not give that reward. Check ox_inventory items.',
+    claimed = 'Already claimed.',
+    locked = 'That tier is still locked.',
+    premium = 'Premium required.',
+    not_started = 'The season has not started yet.',
+    ended = 'The season has ended.',
+    invalid = 'Invalid tier.',
+    no_player = 'Player not ready.',
+    busy = 'Please wait…'
+}
+
 local function claimTier(src, tier)
+    if claiming[src] then return false, 'busy' end
     local row = ensurePlayer(src)
     if not row then return false, 'no_player' end
     local ok, rewardOrErr = canClaim(row, tier)
     if not ok then return false, rewardOrErr end
-    grantReward(src, rewardOrErr)
+
+    claiming[src] = true
+    local granted, grantErr = grantReward(src, rewardOrErr)
+    claiming[src] = nil
+    if not granted then
+        Framework.Notify(src, grantErrors[grantErr] or 'Could not claim that reward.', 'error')
+        return false, grantErr
+    end
+
     row.claimed[#row.claimed + 1] = tier
     table.sort(row.claimed)
     persist(row)
@@ -352,6 +454,9 @@ local function claimTier(src, tier)
     Framework.Notify(src, ('Claimed Tier %d — %s'):format(tier, rewardOrErr.name), 'success')
     return true
 end
+
+rebuildTierIndex()
+refreshSeasonWindow()
 
 CreateThread(function()
     loadJsonStore()
@@ -374,15 +479,31 @@ CreateThread(function()
     else
         print('[DJFIVEM-Battlepass] persistence=data/players.json')
     end
+
+    -- Re-resolve ox images after inventory finishes starting.
+    Wait(1500)
+    publicTierCache = nil
+    publicTiers()
 end)
 
 AddEventHandler('playerDropped', function()
     local src = source
     local row = players[src]
-    if row then persist(row) end
-    if row then persistQueue[row.identifier] = nil end
+    if row then
+        persistQueue[row.identifier] = nil
+        persist(row)
+    end
     players[src] = nil
     lastTick[src] = nil
+    claiming[src] = nil
+end)
+
+AddEventHandler('onResourceStop', function(res)
+    if res ~= resourceName then return end
+    flushPersist()
+    for _, row in pairs(players) do
+        persist(row)
+    end
 end)
 
 RegisterNetEvent('djfivem_battlepass:server:requestOpen', function()
@@ -395,12 +516,11 @@ end)
 RegisterNetEvent('djfivem_battlepass:server:tickXp', function()
     local src = source
     local active, startAt, endsAt, now = seasonActive()
-    if not active then return end
-    if now < startAt or now >= endsAt then return end
+    if not active or now < startAt or now >= endsAt then return end
 
     local last = lastTick[src] or 0
     local interval = math.max(15, tonumber(Config.XpIntervalSeconds) or 60)
-    if (now - last) < (interval - 2) then return end -- anti-spam
+    if (now - last) < (interval - 2) then return end
     lastTick[src] = now
 
     local row = ensurePlayer(src)
@@ -420,25 +540,43 @@ end)
 
 RegisterNetEvent('djfivem_battlepass:server:claimAll', function()
     local src = source
+    if claiming[src] then
+        Framework.Notify(src, grantErrors.busy, 'error')
+        return
+    end
     local row = ensurePlayer(src)
     if not row then return end
+
+    claiming[src] = true
     local claimed = 0
+    local blocked
     for _, reward in ipairs(Config.Tiers) do
         local ok, rewardOrErr = canClaim(row, reward.tier)
         if ok then
-            grantReward(src, rewardOrErr)
-            row.claimed[#row.claimed + 1] = reward.tier
-            claimed = claimed + 1
+            local granted, grantErr = grantReward(src, rewardOrErr)
+            if granted then
+                row.claimed[#row.claimed + 1] = reward.tier
+                claimed = claimed + 1
+            else
+                blocked = grantErr
+                break
+            end
         end
     end
+    claiming[src] = nil
+
     if claimed == 0 then
-        Framework.Notify(src, 'Nothing to claim right now.', 'error')
+        Framework.Notify(src, blocked and (grantErrors[blocked] or 'Nothing to claim right now.') or 'Nothing to claim right now.', 'error')
         return
     end
     table.sort(row.claimed)
     persist(row)
     push(src)
-    Framework.Notify(src, ('Claimed %d reward%s.'):format(claimed, claimed == 1 and '' or 's'), 'success')
+    if blocked then
+        Framework.Notify(src, ('Claimed %d reward%s. %s'):format(claimed, claimed == 1 and '' or 's', grantErrors[blocked] or ''), 'error')
+    else
+        Framework.Notify(src, ('Claimed %d reward%s.'):format(claimed, claimed == 1 and '' or 's'), 'success')
+    end
 end)
 
 local function isAdmin(src)

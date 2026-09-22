@@ -5,7 +5,10 @@ lua54 'yes'
 name 'DJFIVEM-Battlepass'
 author 'DJFIVEM'
 description 'Chapter 1 Season 1 battle pass — 28 XP tiers, 30-day season, F12 to open'
-version '1.0.0'
+version '1.1.0'
+
+-- Item icons load from ox_inventory/web/images at runtime (nui:// / cfx-nui).
+-- dependency 'ox_inventory'
 
 ui_page 'html/index.html'
 
