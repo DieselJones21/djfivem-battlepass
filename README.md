@@ -48,7 +48,7 @@ Pet Pug is late (tier 26). **WEAPON_4THARP** is last (tier 28). Quantities with 
 | 27 | Pink Energy | `pink_energy` | 50 |
 | 28 | 4th ARP | `WEAPON_4THARP` | 1 |
 
-These names must exist in your inventory. Item art loads from `ox_inventory/web/images/{item}.png` (then `.webp` / lowercase). Missing files fall back to the built-in SVG. Set `Config.InventoryImageResource` / `Config.InventoryImageFolder` if your path differs. Weapons grant as inventory items first (exact name, then lowercase).
+These names must exist in **ox_inventory**. Item art always loads from `ox_inventory/web/images/{item}.png` (then `.webp`, lowercase, and weapon aliases via `nui://` / `cfx-nui-`). Missing files fall back to the built-in SVG. Set `Config.InventoryImageResource` / `Config.InventoryImageFolder` if your path differs. Weapons grant as inventory items first (exact name, then lowercase). Claims no longer complete if the player cannot carry the item.
 
 ## Going live
 

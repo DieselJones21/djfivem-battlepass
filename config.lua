@@ -37,9 +37,11 @@ Config.PremiumCommand = 'bppgive'
 Config.Framework = 'auto' -- 'auto' | 'qb' | 'qbx' | 'esx' | 'standalone'
 Config.Inventory = 'auto' -- 'auto' | 'ox' | 'qb' | 'esx' | 'none'
 
--- Item icons: ox_inventory/web/images/{item}.png (nui://). Falls back to html/icons/.
+-- Item art always comes from ox_inventory/web/images first (nui:// + cfx-nui).
+-- Tries {item}.png then .webp, plus lowercase / weapon aliases. Local SVGs are last-resort only.
 Config.InventoryImageResource = 'ox_inventory'
 Config.InventoryImageFolder = 'web/images'
+Config.InventoryImageExtensions = { 'png', 'webp' }
 
 -- Notifications: ox_lib if started, otherwise native GTA help text.
 Config.Notify = 'auto'

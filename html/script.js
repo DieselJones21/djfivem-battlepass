@@ -8,7 +8,10 @@ let selectedTier = 1;
 let endsAt = 0;
 let uiOpen = false;
 let trackBuilt = false;
+let claimedCache = new Set();
+let nextClaimableTier = 0;
 const imageCache = new Map();
+const imgToken = new WeakMap();
 
 function resourceName() {
   try {
@@ -31,18 +34,30 @@ function $(id) {
   return document.getElementById(id);
 }
 
-function claimedSet() {
+function escapeHtml(value) {
+  return String(value == null ? '' : value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function refreshClaimed() {
   const set = new Set();
-  (state.claimed || []).forEach((n) => set.add(Number(n)));
+  (state && state.claimed ? state.claimed : []).forEach((n) => {
+    const tier = Number(n);
+    if (Number.isFinite(tier)) set.add(tier);
+  });
+  claimedCache = set;
   return set;
 }
 
 function isUnlocked(tier) {
-  return (state.unlocked || 0) >= tier;
+  return (state && state.unlocked || 0) >= tier;
 }
 
 function isClaimed(tier) {
-  return claimedSet().has(tier);
+  return claimedCache.has(tier);
 }
 
 function isLocked(tier) {
@@ -50,23 +65,30 @@ function isLocked(tier) {
 }
 
 function allFree() {
-  return !!(state && (state.allFree || ConfigAllFree));
+  return !!(state && state.allFree);
 }
-
-const ConfigAllFree = true;
 
 function needsPremium(t) {
   if (!t || allFree()) return false;
   return !!(t.premium && state && !state.premium);
 }
 
+function canClaimTier(t) {
+  if (!t || isClaimed(t.tier) || isLocked(t.tier) || needsPremium(t)) return false;
+  return (state.remainingSeconds || 0) > 0;
+}
+
 function claimableCount() {
   if (!state) return 0;
-  return (state.tiers || []).filter((t) => {
-    if (isClaimed(t.tier) || isLocked(t.tier)) return false;
-    if (needsPremium(t)) return false;
-    return true;
-  }).length;
+  return (state.tiers || []).reduce((n, t) => n + (canClaimTier(t) ? 1 : 0), 0);
+}
+
+function firstClaimableTier() {
+  if (!state) return 0;
+  for (const t of state.tiers || []) {
+    if (canClaimTier(t)) return t.tier;
+  }
+  return 0;
 }
 
 function formatTimer(total) {
@@ -91,80 +113,144 @@ function typeLabel(t) {
 }
 
 function fallbackIcon(t) {
-  return `icons/${(t && t.icon) || ('tier_' + String((t && t.tier) || 1).padStart(2, '0') + '.svg')}`;
+  const icon = (t && t.icon) || (`tier_${String((t && t.tier) || 1).padStart(2, '0')}.svg`);
+  return `icons/${icon}`;
 }
 
-function inventoryImageNames(item) {
-  if (!item) return [];
-  const names = new Set([item, String(item).toLowerCase()]);
-  const lower = String(item).toLowerCase();
-  if (lower.startsWith('weapon_')) names.add(lower);
-  return [...names];
+function pushUnique(list, seen, value) {
+  if (!value || seen.has(value)) return;
+  seen.add(value);
+  list.push(value);
 }
 
-function inventoryImageUrls(item) {
-  const resource = (state && state.imageResource) || 'ox_inventory';
-  const folder = (state && state.imageFolder) || 'web/images';
+function oxFileNames(t) {
+  const names = [];
+  const seen = new Set();
+  const add = (name) => {
+    if (!name) return;
+    const raw = String(name).trim();
+    if (!raw) return;
+    pushUnique(names, seen, raw);
+    const base = raw.replace(/\.(png|webp|jpe?g)$/i, '');
+    if (base !== raw) pushUnique(names, seen, base);
+  };
+
+  if (t.oxImage && !/^(https?:|nui:)/i.test(t.oxImage)) add(t.oxImage);
+  add(t.imageName);
+  add(t.item);
+  if (t.item) {
+    const item = String(t.item);
+    add(item.toLowerCase());
+    add(item.toUpperCase());
+    const lower = item.toLowerCase();
+    if (lower.startsWith('weapon_')) {
+      add(item.slice(7));
+      add(lower.slice(7));
+    }
+  }
+  return names;
+}
+
+function inventoryImageUrls(t) {
+  if (!t) return [];
   const urls = [];
   const seen = new Set();
-  inventoryImageNames(item).forEach((name) => {
-    const url = `nui://${resource}/${folder}/${name}.png`;
-    if (!seen.has(url)) {
-      seen.add(url);
-      urls.push(url);
+  const resource = (state && state.imageResource) || 'ox_inventory';
+  const folder = String((state && state.imageFolder) || 'web/images').replace(/^\/+|\/+$/g, '');
+  const exts = (state && state.imageExts && state.imageExts.length)
+    ? state.imageExts
+    : ['png', 'webp'];
+  const bases = [
+    `https://cfx-nui-${resource}/${folder}`,
+    `nui://${resource}/${folder}`
+  ];
+
+  if (t.oxImage && /^(https?:|nui:)/i.test(t.oxImage)) {
+    pushUnique(urls, seen, t.oxImage);
+  }
+
+  const names = oxFileNames(t);
+  names.forEach((name) => {
+    if (/\.(png|webp|jpe?g)$/i.test(name)) {
+      bases.forEach((base) => pushUnique(urls, seen, `${base}/${name}`));
     }
   });
+  names.forEach((name) => {
+    const stem = name.replace(/\.(png|webp|jpe?g)$/i, '');
+    exts.forEach((ext) => {
+      bases.forEach((base) => pushUnique(urls, seen, `${base}/${stem}.${ext}`));
+    });
+  });
   return urls;
+}
+
+function cacheKey(t) {
+  return String((t && (t.item || t.imageName || t.icon || t.tier)) || '');
 }
 
 function setItemImage(img, t) {
   if (!img || !t) return;
   const fallback = fallbackIcon(t);
-  const key = t.item || fallback;
+  const key = cacheKey(t);
+  const token = (imgToken.get(img) || 0) + 1;
+  imgToken.set(img, token);
   img.onerror = null;
+  img.onload = null;
+
   if (imageCache.has(key)) {
     img.src = imageCache.get(key);
     return;
   }
-  if (!IN_FIVEM || !t.item) {
+
+  // In FiveM every reward icon is resolved from ox_inventory/web/images.
+  // Browser preview cannot reach nui:// so it uses the local SVG fallback.
+  const queue = IN_FIVEM ? inventoryImageUrls(t) : [];
+  if (!queue.length) {
     imageCache.set(key, fallback);
     img.src = fallback;
     return;
   }
-  const queue = inventoryImageUrls(t.item);
+
   let i = 0;
   const next = () => {
+    if (imgToken.get(img) !== token) return;
     if (i >= queue.length) {
       img.onerror = null;
+      img.onload = null;
       imageCache.set(key, fallback);
       img.src = fallback;
       return;
     }
     img.src = queue[i++];
   };
-  img.onload = function onOk() {
+
+  img.onload = () => {
+    if (imgToken.get(img) !== token) return;
     img.onload = null;
     img.onerror = null;
-    imageCache.set(key, img.src);
+    imageCache.set(key, img.currentSrc || img.src);
   };
   img.onerror = next;
   next();
 }
 
 function bindItemImages(root) {
+  const tiers = state && state.tiers ? state.tiers : [];
   (root || document).querySelectorAll('img[data-item-tier]').forEach((img) => {
     const tier = Number(img.dataset.itemTier);
-    const t = (state.tiers || []).find((row) => row.tier === tier);
+    const t = tiers.find((row) => row.tier === tier);
     setItemImage(img, t);
   });
 }
 
 function currentReward() {
-  return (state.tiers || []).find((t) => t.tier === selectedTier) || state.tiers[0];
+  const tiers = (state && state.tiers) || [];
+  return tiers.find((t) => t.tier === selectedTier) || tiers[0] || null;
 }
 
 function toast(msg) {
   const el = $('toast');
+  if (!el) return;
   el.textContent = msg;
   el.classList.remove('hidden');
   clearTimeout(toast._t);
@@ -173,25 +259,26 @@ function toast(msg) {
 
 function renderHeader() {
   const total = state.totalTiers || 28;
-  const claimed = state.claimedCount || claimedSet().size;
-  const pct = Math.round((claimed / total) * 100);
-  $('seasonLabel').textContent = state.seasonLabel || `BATTLE PASS C${state.chapter}S${state.season}`;
+  const claimed = state.claimedCount || claimedCache.size;
+  const pct = total ? Math.round((claimed / total) * 100) : 0;
+  $('seasonLabel').textContent = state.seasonLabel || `CHAPTER ${state.chapter}  ·  SEASON ${state.season}`;
   $('pctComplete').textContent = `${pct}% COMPLETE`;
   $('claimedHeader').textContent = `${claimed} / ${total} CLAIMED`;
   if ($('pctFill')) $('pctFill').style.width = `${Math.min(100, pct)}%`;
-  if ($('claimedFill')) $('claimedFill').style.width = `${Math.min(100, (claimed / total) * 100)}%`;
+  if ($('claimedFill')) $('claimedFill').style.width = `${Math.min(100, total ? (claimed / total) * 100 : 0)}%`;
+  if ($('closeKey') && state.closeKey) $('closeKey').textContent = state.closeKey;
 }
 
 function renderLeft() {
   const total = state.totalTiers || 28;
   const unlocked = state.unlocked || 0;
-  const claimed = state.claimedCount || claimedSet().size;
+  const claimed = state.claimedCount || claimedCache.size;
   const level = unlocked >= total ? total : Math.max(1, unlocked + 1);
   $('levelValue').textContent = `LEVEL ${level}`;
   $('tierLine').textContent = `Tier ${unlocked} / ${total}`;
   const into = state.xpIntoTier || 0;
   const per = state.xpPerTier || 2000;
-  $('xpFill').style.width = `${Math.min(100, (into / per) * 100)}%`;
+  $('xpFill').style.width = `${Math.min(100, per ? (into / per) * 100 : 0)}%`;
   $('xpMeta').textContent = `${into} / ${per} XP`;
   $('statUnlocked').textContent = unlocked;
   $('statClaimed').textContent = claimed;
@@ -224,13 +311,16 @@ function renderPreview() {
   const preview = $('previewImage');
   preview.dataset.itemTier = String(t.tier);
   setItemImage(preview, t);
-  $('previewName').textContent = t.name.toUpperCase();
+  const rarity = rarityClass(t.rarity);
+  const frame = $('previewFrame');
+  if (frame) frame.className = `preview-frame ${rarity}`;
+  $('previewName').textContent = String(t.name || '').toUpperCase();
   $('previewDesc').textContent = t.description || '';
   const qty = Number(t.amount) > 1 ? `  ·  x${t.amount}` : '';
   $('previewType').textContent = `TYPE: ${typeLabel(t)}${qty}`;
   $('previewTags').innerHTML = [
-    `<span class="tag ${rarityClass(t.rarity)}">${(t.rarity || 'common').toUpperCase()}</span>`,
-    `<span class="tag tier">TIER ${t.tier}</span>`,
+    `<span class="tag ${rarity}">${escapeHtml((t.rarity || 'common').toUpperCase())}</span>`,
+    `<span class="tag tier">TIER ${escapeHtml(t.tier)}</span>`,
     `<span class="tag free">FREE</span>`
   ].join('');
 
@@ -254,7 +344,7 @@ function renderPreview() {
     btn.classList.add('ended');
     btn.disabled = true;
   } else {
-    btn.textContent = '✓  CLAIM REWARD';
+    btn.textContent = 'CLAIM REWARD';
   }
 }
 
@@ -266,20 +356,23 @@ function updateClaimAll() {
 }
 
 function patchTrackClasses() {
-  const claimed = claimedSet();
+  nextClaimableTier = firstClaimableTier();
   document.querySelectorAll('#track .card').forEach((card) => {
     const tier = Number(card.dataset.tier);
     card.classList.toggle('locked', isLocked(tier));
-    card.classList.toggle('claimed', claimed.has(tier));
+    card.classList.toggle('claimed', claimedCache.has(tier));
     card.classList.toggle('selected', tier === selectedTier);
+    card.classList.toggle('claimable', canClaimTier({ tier, premium: card.dataset.premium === '1' }));
+    card.classList.toggle('next-up', tier === nextClaimableTier && tier !== selectedTier);
   });
   const total = state.totalTiers || 28;
   const unlocked = state.unlocked || 0;
   const fill = total <= 1 ? 0 : (unlocked / (total - 1)) * 100;
   const bar = document.querySelector('#timeline .timeline-fill');
   if (bar) bar.style.width = `${Math.min(100, fill)}%`;
-  document.querySelectorAll('#timeline .node').forEach((node, i) => {
-    node.classList.toggle('on', (i + 1) <= unlocked);
+  document.querySelectorAll('#timeline .node').forEach((node) => {
+    const tier = Number(node.dataset.tier);
+    node.classList.toggle('on', Number.isFinite(tier) ? tier <= unlocked : false);
   });
   updateClaimAll();
 }
@@ -291,20 +384,23 @@ function renderTrack(force) {
     return;
   }
   const keepScroll = track.scrollLeft;
-  const claimed = claimedSet();
+  nextClaimableTier = firstClaimableTier();
   track.innerHTML = (state.tiers || []).map((t) => {
     const locked = isLocked(t.tier);
-    const done = claimed.has(t.tier);
+    const done = claimedCache.has(t.tier);
     const selected = t.tier === selectedTier ? ' selected' : '';
-    const qty = Number(t.amount) > 1 ? `<div class="card-qty">x${t.amount}</div>` : '';
+    const claimable = canClaimTier(t) ? ' claimable' : '';
+    const nextUp = t.tier === nextClaimableTier && t.tier !== selectedTier ? ' next-up' : '';
+    const rarity = ` rarity-${rarityClass(t.rarity)}`;
+    const qty = Number(t.amount) > 1 ? `<div class="card-qty">x${escapeHtml(t.amount)}</div>` : '';
     return `
-      <article class="card${selected}${locked ? ' locked' : ''}${done ? ' claimed' : ''}" data-tier="${t.tier}">
+      <article class="card${selected}${locked ? ' locked' : ''}${done ? ' claimed' : ''}${claimable}${nextUp}${rarity}" data-tier="${t.tier}" data-premium="${t.premium ? '1' : '0'}">
         <div class="card-next">NEXT</div>
         <div class="card-check">${CHECK_SVG}</div>
         ${qty}
-        <div class="card-tier">${t.tier}</div>
-        <div class="card-art"><img data-item-tier="${t.tier}" alt="" /></div>
-        <div class="card-name">${t.name}</div>
+        <div class="card-tier">${escapeHtml(t.tier)}</div>
+        <div class="card-art"><img data-item-tier="${t.tier}" alt="${escapeHtml(t.name)}" /></div>
+        <div class="card-name">${escapeHtml(t.name)}</div>
         <div class="card-lock">${LOCK_SVG}</div>
         <div class="card-flag free">FREE</div>
       </article>
@@ -318,7 +414,7 @@ function renderTrack(force) {
     <div class="timeline-line"></div>
     <div class="timeline-fill" style="width:${Math.min(100, fill)}%"></div>
     <div class="timeline-nodes">
-      ${(state.tiers || []).map((t) => `<span class="node${t.tier <= unlocked ? ' on' : ''}"></span>`).join('')}
+      ${(state.tiers || []).map((t) => `<span class="node${t.tier <= unlocked ? ' on' : ''}" data-tier="${t.tier}"></span>`).join('')}
     </div>
   `;
 
@@ -330,6 +426,7 @@ function renderTrack(force) {
 
 function render(forceTrack) {
   if (!state) return;
+  refreshClaimed();
   renderHeader();
   renderLeft();
   renderTrack(forceTrack);
@@ -350,7 +447,7 @@ function pickDefaultTier(data) {
   const claimed = new Set((data.claimed || []).map(Number));
   const unlocked = data.unlocked || 0;
   for (const t of data.tiers || []) {
-    if (t.tier <= unlocked && !claimed.has(t.tier) && !(t.premium && !data.premium && !data.allFree && !ConfigAllFree)) {
+    if (t.tier <= unlocked && !claimed.has(t.tier) && !(t.premium && !data.premium && !data.allFree)) {
       return t.tier;
     }
   }
@@ -359,17 +456,18 @@ function pickDefaultTier(data) {
 
 function hideOverlay() {
   uiOpen = false;
-  document.getElementById('app').classList.add('hidden');
+  $('app').classList.add('hidden');
 }
 
 function openUi(data, preferTier) {
   if (!data) return;
   state = data;
+  refreshClaimed();
   endsAt = Date.now() + (data.remainingSeconds || 0) * 1000;
   selectedTier = preferTier || pickDefaultTier(data);
-  if (selectedTier > (data.totalTiers || 28)) selectedTier = data.totalTiers;
+  if (selectedTier > (data.totalTiers || 28)) selectedTier = data.totalTiers || selectedTier;
   uiOpen = true;
-  document.getElementById('app').classList.remove('hidden');
+  $('app').classList.remove('hidden');
   render(true);
   const current = document.querySelector(`.card[data-tier="${selectedTier}"]`);
   if (current) current.scrollIntoView({ inline: 'center', block: 'nearest' });
@@ -383,6 +481,7 @@ function closeUi() {
 function applyUpdate(data) {
   if (!data) return;
   state = data;
+  refreshClaimed();
   endsAt = Date.now() + (data.remainingSeconds || 0) * 1000;
   if (!uiOpen) return;
   render(false);
@@ -394,7 +493,7 @@ window.addEventListener('message', (event) => {
     if (msg.data) openUi(msg.data);
     else if (state) {
       uiOpen = true;
-      document.getElementById('app').classList.remove('hidden');
+      $('app').classList.remove('hidden');
     }
   } else if (msg.action === 'close') {
     hideOverlay();
@@ -406,7 +505,7 @@ window.addEventListener('message', (event) => {
 });
 
 document.addEventListener('keydown', (e) => {
-  if (document.getElementById('app').classList.contains('hidden')) return;
+  if ($('app').classList.contains('hidden') || !state) return;
   if (e.key === 'Escape') {
     closeUi();
   } else if (e.key === 'ArrowRight') {
@@ -418,7 +517,7 @@ document.addEventListener('keydown', (e) => {
 
 $('claimBtn').addEventListener('click', () => {
   const t = currentReward();
-  if (!t) return;
+  if (!t || !canClaimTier(t)) return;
   post('claim', { tier: t.tier });
   if (!IN_FIVEM && !isClaimed(t.tier) && isUnlocked(t.tier) && !needsPremium(t)) {
     state.claimed = [...(state.claimed || []), t.tier];
@@ -428,12 +527,11 @@ $('claimBtn').addEventListener('click', () => {
 });
 
 $('claimAllBtn').addEventListener('click', () => {
+  if (!claimableCount()) return;
   post('claimAll');
   if (!IN_FIVEM) {
-    state.tiers.forEach((t) => {
-      if (isUnlocked(t.tier) && !needsPremium(t) && !isClaimed(t.tier)) {
-        state.claimed.push(t.tier);
-      }
+    (state.tiers || []).forEach((t) => {
+      if (canClaimTier(t)) state.claimed.push(t.tier);
     });
     state.claimedCount = state.claimed.length;
     render();
@@ -467,10 +565,11 @@ $('claimAllBtn').addEventListener('click', () => {
     if (moved) el.scrollLeft = scroll - dx;
   });
 
-  const end = () => {
+  const end = (e) => {
     if (!active) return;
     active = false;
     el.classList.remove('dragging');
+    try { el.releasePointerCapture(e.pointerId); } catch (_) {}
     if (!moved && pendingTier) selectTier(pendingTier, false);
     pendingTier = null;
   };
@@ -489,6 +588,10 @@ setInterval(() => {
   state.remainingSeconds = left;
   const el = $('seasonTimer');
   if (el) el.textContent = formatTimer(left);
+  if (left === 0) {
+    renderPreview();
+    updateClaimAll();
+  }
 }, 1000);
 
 function mockState(tiers) {
@@ -498,7 +601,7 @@ function mockState(tiers) {
     title: 'DJFIVEM-Battlepass',
     chapter: 1,
     season: 1,
-    seasonLabel: 'BATTLE PASS C1S1',
+    seasonLabel: 'CHAPTER 1  ·  SEASON 1',
     allFree: true,
     xp: 11 * 2000 + 100,
     xpPerTier: 2000,
@@ -512,6 +615,7 @@ function mockState(tiers) {
     premiumMultiplier: 2,
     imageResource: 'ox_inventory',
     imageFolder: 'web/images',
+    imageExts: ['png', 'webp'],
     remainingSeconds: 30 * 24 * 60 * 60 - 3600,
     totalTiers: tiers.length || 28,
     closeKey: 'ESC',

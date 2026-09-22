@@ -3,6 +3,7 @@ local lastCoords = vector3(0.0, 0.0, 0.0)
 local lastMovedAt = GetGameTimer()
 local spawned = false
 local lastToggleAt = 0
+local lastClaimAt = 0
 
 local function nui(payload)
     SendNUIMessage(payload)
@@ -122,8 +123,15 @@ RegisterNUICallback('close', function(_, cb)
     cb({ ok = true })
 end)
 
+local function claimReady()
+    local now = GetGameTimer()
+    if (now - lastClaimAt) < 350 then return false end
+    lastClaimAt = now
+    return true
+end
+
 RegisterNUICallback('claim', function(data, cb)
-    if not nuiOpen then
+    if not nuiOpen or not claimReady() then
         cb({ ok = false })
         return
     end
@@ -137,7 +145,7 @@ RegisterNUICallback('claim', function(data, cb)
 end)
 
 RegisterNUICallback('claimAll', function(_, cb)
-    if not nuiOpen then
+    if not nuiOpen or not claimReady() then
         cb({ ok = false })
         return
     end
@@ -168,12 +176,13 @@ CreateThread(function()
             end
             Wait(0)
         else
-            Wait(500)
+            Wait(400)
         end
     end
 end)
 
 CreateThread(function()
+    local threshold = Config.AfkMoveThreshold or 1.25
     while true do
         Wait(2000)
         if isPlayerInCity() then
@@ -182,7 +191,7 @@ CreateThread(function()
             if lastCoords.x == 0.0 and lastCoords.y == 0.0 then
                 lastCoords = coords
                 lastMovedAt = GetGameTimer()
-            elseif #(coords - lastCoords) >= (Config.AfkMoveThreshold or 1.25) then
+            elseif #(coords - lastCoords) >= threshold then
                 lastCoords = coords
                 lastMovedAt = GetGameTimer()
             end
@@ -192,11 +201,11 @@ end)
 
 CreateThread(function()
     local interval = math.max(15, tonumber(Config.XpIntervalSeconds) or 60) * 1000
+    local afkMs = (tonumber(Config.AfkTimeoutSeconds) or 180) * 1000
     while true do
         Wait(interval)
         if isPlayerInCity() then
             local idleMs = GetGameTimer() - lastMovedAt
-            local afkMs = (tonumber(Config.AfkTimeoutSeconds) or 180) * 1000
             if afkMs <= 0 or idleMs < afkMs then
                 TriggerServerEvent('djfivem_battlepass:server:tickXp')
             end
@@ -211,7 +220,8 @@ end)
 
 CreateThread(function()
     Wait(1500)
-    if NetworkIsPlayerActive(PlayerId()) and DoesEntityExist(PlayerPedId()) and HasCollisionLoadedAroundEntity(PlayerPedId()) then
+    local ped = PlayerPedId()
+    if NetworkIsPlayerActive(PlayerId()) and DoesEntityExist(ped) and HasCollisionLoadedAroundEntity(ped) then
         spawned = true
     end
     forceClosed()
