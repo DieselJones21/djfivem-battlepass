@@ -880,3 +880,19 @@ body.preview {
   .left-panel, .right-panel { width: 236px; }
   .header-title { letter-spacing: 0.12em; }
 }
+
+@media (max-height: 800px) {
+  .header { top: 1.6vh; }
+  .header-title { font-size: clamp(36px, 5.2vw, 62px); }
+  .left-panel { top: 16vh; }
+  .right-panel { top: 13vh; min-height: 40vh; }
+  .preview-art { height: 16vh; }
+  .card { flex-basis: 122px; height: 152px; }
+  .card-art { height: 88px; }
+  .card-art img { width: 70px; height: 70px; }
+}
+
+@media (max-width: 900px) {
+  .left-panel { display: none; }
+  .right-panel { width: min(260px, 42vw); }
+}
